@@ -1,0 +1,2440 @@
+<?php
+
+namespace App\Http\Controllers\web;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Carbon\Carbon;
+use App\Models\Appointment;
+use App\Models\Service;
+use App\Models\User;
+use App\Models\PetProfile;
+use App\Models\TimeSlot;
+use App\Models\Questionnaire;
+use App\Models\Checkin;
+use App\Models\Process;
+use App\Models\Invoice;
+use App\Models\InvoiceItem;
+use App\Models\Checkout;
+use App\Models\GroupClass;
+use App\Models\ServiceCategory;
+use App\Models\PetInitialTemperament;
+use App\Models\AppointmentCancellation;
+use App\Models\Transaction;
+use App\Models\Package;
+use App\Models\CustomerPackage;
+use App\Models\Notification;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\Invoice as InvoiceMail;
+use App\Mail\AdminCustomerMessage;
+
+class AppointmentController extends Controller
+{
+    public function list(Request $request)
+    {
+        $perPage = $request->get('per_page', 20);
+
+        $customerPet = $request->get('customer');
+        $serviceId = $request->get('service');
+        $staffId = $request->get('staff');
+        $status = $request->get('status');
+
+        $datetimes = $request->get('datetimes');
+
+        // get appointments
+        if ($customerPet) {
+            $appointments = Appointment::whereHas('customer', function ($query) use ($customerPet) {
+                $query->where('email', 'like', "%{$customerPet}%")
+                    ->orWhereHas('profile', function ($q) use ($customerPet) {
+                        $q->where('first_name', 'like', "%{$customerPet}%")
+                            ->orWhere('last_name', 'like', "%{$customerPet}%");
+                    });
+            })->orWhereHas('pet', function ($query) use ($customerPet) {
+                $query->where('name', 'like', "%{$customerPet}%");
+            });
+        } else {
+            $appointments = Appointment::query();
+        }
+
+        if ($serviceId)
+            $appointments = $appointments->where('service_id', $serviceId);
+
+        if ($staffId)
+            $appointments = $appointments->where('staff_id', $staffId);
+
+        if ($status)
+            $appointments = $appointments->where('status', $status);
+
+        if ($datetimes) {
+            // Example: "09/05/25 12:00 PM - 09/18/25 08:00 PM"
+            [$start, $end] = explode(' - ', $datetimes);
+
+            // Parse to Carbon (assuming format: m/d/y h:i A)
+            $startDateTime = Carbon::createFromFormat('m/d/y h:i A', trim($start))->format('Y-m-d H:i:s');
+            $endDateTime = Carbon::createFromFormat('m/d/y h:i A', trim($end))->format('Y-m-d H:i:s');
+
+            // Filter appointments where start_time is within the range
+            $appointments = $appointments->where(function($query) use ($startDateTime, $endDateTime) {
+                $query->whereRaw("CONCAT(date, ' ', start_time) >= ?", [$startDateTime])
+                    ->whereRaw("CONCAT(date, ' ', end_time) <= ?", [$endDateTime]);
+            });
+        }
+        $appointments = $appointments->orderBy('created_at', 'desc')->paginate($perPage);
+
+        $services = Service::where('status', 'active')->where('level', 'primary')->get();
+        $staffs = User::whereHas('roles', function ($query) {
+            $query->whereNot('title', 'customer');
+        })->get();
+
+        return view('appointments.index', compact('appointments', 'perPage', 'services', 'staffs', 'datetimes', 'customerPet', 'serviceId', 'staffId', 'status'));
+    }
+
+    public function add(Request $request)
+    {
+        $serviceId = $request->get('service_id');
+        // Get all additional services except the main service if selected
+        if (isset($serviceId)) {
+            $additionalServices = Service::where('id', '!=', $serviceId)->where('status', 'active')->get();
+        } else {
+            $additionalServices = Service::where('status', 'active')->get();
+        }
+
+        // Grooming (secondary) services
+        $additionalServicesGrooming = $additionalServices->filter(function ($item) {
+            return str_contains(strtolower(optional($item->category)->name), 'groom') && $item->level === 'secondary';
+        })->values();
+
+        // Training services
+        $additionalServicesTraining = $additionalServices->filter(function ($item) {
+            return str_contains(strtolower(optional($item->category)->name), 'training');
+        })->values();
+
+        $services = Service::where('status', 'active')->where('level', 'primary')->get();
+        $groupClasses = GroupClass::where('status', 'active')->orderBy('started_at', 'desc')->get();
+        $packages = Package::where('status', 'active')->orderBy('created_at', 'desc')->get();
+
+        // Secondary grooming services for selection (for dropdown etc)
+        $secondaryServices = Service::where('status', 'active')
+            ->where('level', 'secondary')
+            ->whereHas('category', function($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%groom%']);
+            })
+            ->with('category')
+            ->get();
+
+        return view('appointments.create', compact(
+            'services',
+            'additionalServices',
+            'additionalServicesGrooming',
+            'additionalServicesTraining',
+            'serviceId',
+            'groupClasses',
+            'secondaryServices',
+            'packages'
+        ));
+    }
+
+    public function getCustomers(Request $request)
+    {
+        $search = $request->get('q', '');
+
+        $customers = User::whereHas('roles', function ($query) {
+            $query->where('title', 'customer');
+        })->where(function ($query) use ($search) {
+            $query->where('email', 'like', "%{$search}%")
+                ->orWhereHas('profile', function ($q) use ($search) {
+                    $q->where('first_name', 'like', "%{$search}%")
+                        ->orWhere('last_name', 'like', "%{$search}%");
+                });
+        })->with('profile')->limit(6)->get();
+
+        return response()->json($customers);
+    }
+
+    public function getCustomerPets($customerId)
+    {
+        $pets = PetProfile::where('user_id', $customerId)->get();
+
+        return response()->json($pets);
+    }
+
+    public function getCustomerPackages($customerId)
+    {
+        $customerPackages = CustomerPackage::where('customer_id', $customerId)
+            ->where('remaining_days', '>', 0)
+            ->with('package')
+            ->get();
+
+        $packages = $customerPackages->map(function ($cp) {
+            return [
+                'id' => $cp->package->id,
+                'name' => $cp->package->name,
+                'price' => $cp->package->price,
+                'days' => $cp->package->days,
+                'description' => $cp->package->description,
+                'service_ids' => $cp->package->service_ids,
+                'remaining_days' => $cp->remaining_days,
+                'original_days' => $cp->original_days,
+                'customer_package_id' => $cp->id,
+            ];
+        });
+
+        return response()->json($packages);
+    }
+
+    public function getStaffs(Request $request)
+    {
+        $search = $request->get('q', '');
+
+        $staffs = User::whereHas('roles', function ($query) {
+            $query->whereNot('title', 'customer');
+        })->where(function ($query) use ($search) {
+            if ($search) {
+                $query->where('email', 'like', "%{$search}%")
+                    ->orWhereHas('profile', function ($q) use ($search) {
+                        $q->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%");
+                    });
+            }
+        })->with('profile')->limit(6)->get();
+
+        return response()->json($staffs);
+    }
+
+    public function getTimeSlots(Request $request)
+    {
+        $request->validate([
+            'service_id' => 'required|exists:services,id',
+            'date' => 'required|date',
+            'pet_id' => 'required|exists:pet_profiles,id',
+            'daycare_duration' => 'nullable|in:half,full',
+            'private_training_duration' => 'nullable|in:half,one',
+            'secondary_service_ids' => 'nullable|array',
+            'secondary_service_ids.*' => 'exists:services,id'
+        ]);
+
+        $serviceId = $request->service_id;
+        $date = $request->date;
+        $petId = $request->pet_id;
+        $daycareDuration = $request->daycare_duration;
+        $privateTrainingDuration = $request->private_training_duration;
+        $secondaryServiceIds = $request->secondary_service_ids ?? [];
+
+        $timeSlots = [];
+
+        if ($serviceId && $date && $petId) {
+            $service = Service::with('category')->find($serviceId);
+            $pet = PetProfile::find($petId);
+            $petSize = $pet ? $pet->size : 'medium';
+
+            // Handle ala carte service
+            if (isAlaCarteService($service) && !empty($secondaryServiceIds)) {
+                $timeSlots = $this->getAlaCarteTimeSlots($serviceId, $date, $petSize, $secondaryServiceIds);
+            } else {
+                $query = TimeSlot::where('service_id', $serviceId)->whereDate('date', $date);
+
+                if (isGroomingService($service)) {
+                    $query->where('pet_size', $petSize);
+                } else if (isDaycareService($service)) {
+                    $query->where('daycare_type', $request->daycare_duration);
+                } else if (isPrivateTrainingService($service)) {
+                    $query->where('private_training_type', $request->private_training_duration);
+                }
+
+                $timeSlots = $query->orderBy('start_time')->get();
+            }
+        }
+
+        return response()->json($timeSlots);
+    }
+
+    private function getAlaCarteTimeSlots($serviceId, $date, $petSize, $secondaryServiceIds)
+    {
+        $services = Service::whereIn('id', $secondaryServiceIds)->get();
+        $serviceDurations = [];
+
+        foreach ($services as $service) {
+            $duration = $this->getServiceDuration($service, $petSize);
+            $serviceDurations[$service->id] = [
+                'service' => $service,
+                'duration_hours' => $duration,
+                'duration_minutes' => (int) round($duration * 60),
+            ];
+        }
+
+        if (empty($serviceDurations)) {
+            return collect([]);
+        }
+
+        $serviceTimeslots = [];
+        foreach ($serviceDurations as $serviceId => $serviceData) {
+            $service = $serviceData['service'];
+
+            $query = TimeSlot::where('service_id', $serviceId)
+                ->whereDate('date', $date)
+                ->where('status', 'available')
+                ->whereRaw('booked_count < capacity');
+
+            if (serviceCaresAboutPetSize($service)) {
+                $query->where('pet_size', $petSize);
+            }
+
+            $serviceTimeslots[$serviceId] = $query->orderBy('start_time')->get();
+        }
+
+        $solutions = $this->findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date);
+
+        $solutions = $solutions->map(function($solution, $index) {
+            $solution->id = $index + 1;
+            return $solution;
+        });
+
+        return $solutions;
+    }
+
+    private function findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date)
+    {
+        $solutions = collect([]);
+
+        if (empty($serviceTimeslots)) {
+            return $solutions;
+        }
+
+        $serviceIds = array_keys($serviceTimeslots);
+        $firstServiceId = $serviceIds[0];
+        $remainingServiceIds = array_slice($serviceIds, 1);
+
+        $firstServiceSlots = $serviceTimeslots[$firstServiceId];
+
+        foreach ($firstServiceSlots as $firstSlot) {
+            if ($firstSlot->booked_count >= $firstSlot->capacity) {
+                continue;
+            }
+
+            $solution = $this->tryScheduleFromFirstSlot(
+                $firstSlot,
+                $remainingServiceIds,
+                $serviceTimeslots,
+                $serviceDurations,
+                $date
+            );
+
+            if ($solution) {
+                $solutions->push($solution);
+            }
+        }
+
+        return $solutions->sortBy('start_time')->values();
+    }
+
+    private function tryScheduleFromFirstSlot($firstSlot, $remainingServiceIds, $serviceTimeslots, $serviceDurations, $date)
+    {
+        $scheduledServices = [];
+        $allUsedSlots = [];
+        $slotUsageCount = [];
+
+        $allSlotIds = [];
+        foreach ($serviceTimeslots as $slots) {
+            foreach ($slots as $slot) {
+                $allSlotIds[] = $slot->id;
+            }
+        }
+        $allSlotIds = array_unique($allSlotIds);
+
+        $slotCapacities = [];
+        if (!empty($allSlotIds)) {
+            $slots = TimeSlot::whereIn('id', $allSlotIds)->get(['id', 'capacity', 'booked_count']);
+            foreach ($slots as $slot) {
+                $slotCapacities[$slot->id] = [
+                    'capacity' => $slot->capacity,
+                    'booked_count' => $slot->booked_count,
+                ];
+            }
+        }
+
+        $firstServiceId = $firstSlot->service_id;
+        $firstServiceDuration = $serviceDurations[$firstServiceId]['duration_minutes'];
+        $firstServiceSlots = $serviceTimeslots[$firstServiceId];
+
+        $firstServiceSlotResult = $this->findSlotsForService(
+            $firstSlot,
+            $firstServiceSlots,
+            $firstServiceDuration,
+            $date,
+            $slotCapacities,
+            $slotUsageCount
+        );
+
+        if (!$firstServiceSlotResult) {
+            return null;
+        }
+
+        $firstStartTime = $firstServiceSlotResult['start_time'];
+        $firstEndTime = $firstServiceSlotResult['end_time'];
+        $firstUsedSlotIds = $firstServiceSlotResult['used_slot_ids'];
+
+        foreach ($firstUsedSlotIds as $slotId) {
+            $slotUsageCount[$slotId] = ($slotUsageCount[$slotId] ?? 0) + 1;
+            $allUsedSlots[] = $slotId;
+        }
+
+        $scheduledServices[] = [
+            'service_id' => $firstServiceId,
+            'service_name' => $serviceDurations[$firstServiceId]['service']->name,
+            'start_time' => $firstStartTime->toTimeString(),
+            'end_time' => $firstEndTime->toTimeString(),
+            'duration_minutes' => $firstServiceDuration,
+            'used_slot_ids' => $firstUsedSlotIds,
+        ];
+
+        $earliestStart = $firstStartTime;
+        $latestEnd = $firstEndTime;
+        $lastServiceEndTime = $firstEndTime;
+
+        foreach ($remainingServiceIds as $serviceId) {
+            if (!isset($serviceTimeslots[$serviceId]) || $serviceTimeslots[$serviceId]->isEmpty()) {
+                return null;
+            }
+
+            $requiredMinutes = $serviceDurations[$serviceId]['duration_minutes'];
+            $serviceSlots = $serviceTimeslots[$serviceId];
+
+            $nearestSlot = $this->findNearestSlot($serviceSlots, $lastServiceEndTime, $date, $slotCapacities, $slotUsageCount);
+
+            if (!$nearestSlot) {
+                return null;
+            }
+
+            $serviceSlotResult = $this->findSlotsForService(
+                $nearestSlot,
+                $serviceSlots,
+                $requiredMinutes,
+                $date,
+                $slotCapacities,
+                $slotUsageCount,
+                $lastServiceEndTime
+            );
+
+            if (!$serviceSlotResult) {
+                return null;
+            }
+
+            $actualStartTime = $serviceSlotResult['start_time'];
+            $actualEndTime = $serviceSlotResult['end_time'];
+            $usedSlotIds = $serviceSlotResult['used_slot_ids'];
+
+            foreach ($usedSlotIds as $slotId) {
+                $slotUsageCount[$slotId] = ($slotUsageCount[$slotId] ?? 0) + 1;
+                $allUsedSlots[] = $slotId;
+            }
+
+            $scheduledServices[] = [
+                'service_id' => $serviceId,
+                'service_name' => $serviceDurations[$serviceId]['service']->name,
+                'start_time' => $actualStartTime->toTimeString(),
+                'end_time' => $actualEndTime->toTimeString(),
+                'duration_minutes' => $requiredMinutes,
+                'used_slot_ids' => $usedSlotIds,
+            ];
+
+            if ($actualStartTime->lt($earliestStart)) {
+                $earliestStart = $actualStartTime;
+            }
+            if ($actualEndTime->gt($latestEnd)) {
+                $latestEnd = $actualEndTime;
+            }
+
+            $lastServiceEndTime = $actualEndTime;
+        }
+
+        return (object)[
+            'id' => null,
+            'service_id' => null,
+            'start_time' => $earliestStart->toTimeString(),
+            'end_time' => $latestEnd->toTimeString(),
+            'date' => $date,
+            'capacity' => 1,
+            'booked_count' => 0,
+            'status' => 'available',
+            'is_virtual' => true,
+            'optimized_service_order' => $scheduledServices,
+            'used_slot_ids' => array_unique($allUsedSlots),
+        ];
+    }
+
+    private function findNearestSlot($serviceSlots, $afterTime, $date, $slotCapacities, $slotUsageCount)
+    {
+        foreach ($serviceSlots as $slot) {
+            if ($slot->booked_count >= $slot->capacity) {
+                continue;
+            }
+
+            $slotStartTime = Carbon::parse($date . ' ' . $slot->start_time);
+
+            if ($slotStartTime->gte($afterTime)) {
+                $currentUsage = $slotUsageCount[$slot->id] ?? 0;
+                $availableCapacity = $slotCapacities[$slot->id]['capacity'] - $slotCapacities[$slot->id]['booked_count'] - $currentUsage;
+
+                if ($availableCapacity > 0) {
+                    return $slot;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function findSlotsForService($startSlot, $serviceSlots, $requiredMinutes, $date, $slotCapacities, $slotUsageCount, $minStartTime = null)
+    {
+        $startTime = Carbon::parse($date . ' ' . $startSlot->start_time);
+        $endTime = Carbon::parse($date . ' ' . $startSlot->end_time);
+
+        if ($minStartTime && $minStartTime->gt($startTime)) {
+            $startTime = $minStartTime;
+        }
+
+        $slotDuration = $startTime->diffInMinutes($endTime);
+        $usedSlots = collect([$startSlot]);
+
+        if ($slotDuration >= $requiredMinutes) {
+            $canUse = true;
+            foreach ($usedSlots as $slot) {
+                $currentUsage = $slotUsageCount[$slot->id] ?? 0;
+                $availableCapacity = $slotCapacities[$slot->id]['capacity'] - $slotCapacities[$slot->id]['booked_count'] - $currentUsage;
+                if ($availableCapacity <= 0) {
+                    $canUse = false;
+                    break;
+                }
+            }
+
+            if ($canUse) {
+                $actualEndTime = $startTime->copy()->addMinutes($requiredMinutes);
+                return [
+                    'start_time' => $startTime,
+                    'end_time' => $actualEndTime,
+                    'used_slot_ids' => $usedSlots->pluck('id')->toArray(),
+                ];
+            }
+        }
+
+        $currentEndTime = $endTime;
+        $slotIndex = $serviceSlots->search(function($slot) use ($startSlot) {
+            return $slot->id === $startSlot->id;
+        });
+
+        for ($i = $slotIndex + 1; $i < $serviceSlots->count(); $i++) {
+            $nextSlot = $serviceSlots[$i];
+
+            if ($nextSlot->booked_count >= $nextSlot->capacity) {
+                continue;
+            }
+
+            $nextStart = Carbon::parse($date . ' ' . $nextSlot->start_time);
+            $nextEnd = Carbon::parse($date . ' ' . $nextSlot->end_time);
+
+            $gap = $nextStart->diffInMinutes($currentEndTime);
+
+            if ($gap == 0) {
+                $currentUsage = $slotUsageCount[$nextSlot->id] ?? 0;
+                $availableCapacity = $slotCapacities[$nextSlot->id]['capacity'] - $slotCapacities[$nextSlot->id]['booked_count'] - $currentUsage;
+
+                if ($availableCapacity > 0) {
+                    $usedSlots->push($nextSlot);
+                    if ($nextEnd->gt($currentEndTime)) {
+                        $currentEndTime = $nextEnd;
+                    }
+
+                    $totalDuration = $startTime->diffInMinutes($currentEndTime);
+
+                    if ($totalDuration >= $requiredMinutes) {
+                        $actualEndTime = $startTime->copy()->addMinutes($requiredMinutes);
+                        return [
+                            'start_time' => $startTime,
+                            'end_time' => $actualEndTime,
+                            'used_slot_ids' => $usedSlots->pluck('id')->toArray(),
+                        ];
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    private function getServiceDuration($service, $petSize)
+    {
+        switch ($petSize) {
+            case 'small':
+                return $service->duration_small ?? $service->duration;
+            case 'medium':
+                return $service->duration_medium ?? $service->duration;
+            case 'large':
+                return $service->duration_large ?? $service->duration;
+            case 'xlarge':
+                return $service->duration_xlarge ?? $service->duration;
+            default:
+                return $service->duration;
+        }
+    }
+
+    public function getValidationInfo(Request $request)
+    {
+        $request->validate([
+            'pet_id' => 'required|exists:pet_profiles,id',
+            'service_id' => 'required|exists:services,id',
+            'package_id' => 'nullable|exists:packages,id',
+            'additional_services' => 'nullable|array',
+            'additional_services.*' => 'exists:services,id',
+        ]);
+
+        $pet = PetProfile::find($request->pet_id);
+        $service = Service::find($request->service_id);
+        $additionalServiceIds = collect($request->input('additional_services', []))
+            ->filter(fn ($id) => !empty($id))
+            ->map(fn ($id) => intval($id))
+            ->unique()
+            ->values();
+
+        $chauffeurSelectedInAdditionalServices = false;
+        $ownerAddressValid = true;
+        $facilityAddressValid = true;
+
+        if ($additionalServiceIds->isNotEmpty()) {
+            $additionalServices = Service::with('category')
+                ->whereIn('id', $additionalServiceIds)
+                ->get();
+
+            $chauffeurSelectedInAdditionalServices = $additionalServices->contains(function ($additionalService) {
+                return isChauffeurService($additionalService);
+            });
+        }
+
+        if ($chauffeurSelectedInAdditionalServices) {
+            $ownerAddress = buildOwnerAddressFromProfile($pet?->owner?->profile);
+            $ownerAddressValid = !empty($ownerAddress) && geocodeChauffeurAddress($ownerAddress) !== null;
+
+            $facility = \App\Models\FacilityAddress::query()->first();
+            $facilityAddress = buildFacilityAddressFromModel($facility);
+            $facilityAddressValid = !empty($facilityAddress) && geocodeChauffeurAddress($facilityAddress) !== null;
+        }
+
+        // Pet vaccine status check
+        if ($pet->vaccine_status === 'approved') {
+            $vaccineStatus = 'approved';
+        } else if ($pet->vaccine_status === 'expired') {
+            $vaccineStatus = 'expired';
+        } else {
+            $vaccineStatus = false;
+        }
+
+        $questionnaireStatus = true;
+
+        if (isPackageService($service) && $request->filled('package_id')) {
+            $package = Package::find($request->package_id);
+            if ($package && $package->service_ids) {
+                $serviceIds = array_map('trim', explode(',', $package->service_ids));
+                $packageServices = Service::whereIn('id', $serviceIds)->with('category')->get();
+
+                $requiredCategories = [];
+
+                foreach ($packageServices as $packageService) {
+                    if (isGroupClassService($packageService)) {
+                        continue;
+                    }
+
+                    if ($packageService->category) {
+                        $requiredCategories[$packageService->category->id] = $packageService->category;
+                    }
+                }
+
+                foreach ($requiredCategories as $category) {
+                    $categoryQuestionnaire = Questionnaire::where('pet_id', $pet->id)
+                        ->where('user_id', $pet->user_id)
+                        ->where('service_category_id', $category->id)
+                        ->orderBy('created_at', 'desc')
+                        ->first();
+                    if (!$categoryQuestionnaire || $categoryQuestionnaire->status !== 'approved') {
+                        $questionnaireStatus = false;
+                    }
+                }
+            }
+        } else if (isGroomingService($service) || isAlaCarteService($service)) {
+            $serviceCategory = ServiceCategory::whereRaw('LOWER(name) LIKE ?', ['%groom%'])->first();
+            $questionnaire = Questionnaire::where('pet_id', $pet->id)
+                ->where('user_id', $pet->user_id)
+                ->where('service_category_id', $serviceCategory->id)
+                ->orderBy('created_at', 'desc')
+                ->first();
+            $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
+        } else if (isGroupClassService($service)) {
+            $questionnaireStatus = true;
+        } else {
+            $questionnaire = Questionnaire::where('pet_id', $pet->id)
+                ->where('user_id', $pet->user_id)
+                ->where('service_category_id', $service->category->id)
+                ->orderBy('created_at', 'desc')
+                ->first();
+            $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
+        }
+
+        // Pet Owner profile status
+        $ownerStatus = (bool)$pet->owner->status;
+
+        return response()->json([
+            'owner_status' => $ownerStatus,
+            'vaccine_status' => $vaccineStatus,
+            'questionnaire_status' => $questionnaireStatus,
+            'chauffeur_selected' => $chauffeurSelectedInAdditionalServices,
+            'owner_address_valid' => $ownerAddressValid,
+            'facility_address_valid' => $facilityAddressValid,
+        ]);
+    }
+
+    public function create(Request $request)
+    {
+        $request->validate([
+            'customer' => 'required|exists:users,id',
+            'pet' => 'required|exists:pet_profiles,id',
+            'service' => 'required|exists:services,id',
+            'staff' => 'nullable|exists:users,id',
+            'date' => 'nullable|date',
+            'time_slot' => 'nullable',
+            'additional_services' => 'nullable|array',
+            'additional_services.*' => 'exists:services,id',
+            'secondary_services' => 'nullable|array',
+            'secondary_services.*' => 'exists:services,id',
+            'group_class_ids' => 'nullable|array',
+            'group_class_ids.*' => 'exists:group_classes,id',
+        ]);
+
+        $timeSlot = TimeSlot::with('service.category')->find($request->time_slot);
+
+        $metadata = [];
+        if ($timeSlot) {
+            if (isDaycareService($timeSlot->service)) {
+                if ($timeSlot->daycare_type) {
+                    $metadata['daycare_duration'] = $timeSlot->daycare_type === 'full' ? 'full_day' : 'half_day';
+
+                    if ($timeSlot->daycare_type === 'half') {
+                        $startTime = Carbon::parse($timeSlot->start_time);
+                        $metadata['session'] = $startTime->hour < 13 ? 'morning' : 'afternoon';
+                    }
+                }
+            }
+            if (isPrivateTrainingService($timeSlot->service)) {
+                if ($timeSlot->private_training_type) {
+                    $metadata['private_training_duration'] = $timeSlot->private_training_type === 'one' ? 'one_hour' : 'half_hour';
+                }
+            }
+        }
+
+        $service = Service::with('category')->find($request->service);
+        if ($request->has('secondary_services')) {
+            $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
+        }
+
+        $usedSlotIds = [];
+        $alaCarteStartTime = null;
+        $alaCarteEndTime = null;
+        if (isAlaCarteService($service) && $request->filled('time_slot_data')) {
+            $slotData = json_decode($request->time_slot_data, true);
+            if ($slotData) {
+                if (isset($slotData['used_slot_ids'])) {
+                    $usedSlotIds = $slotData['used_slot_ids'];
+                    $metadata['used_slot_ids'] = implode(',', $usedSlotIds);
+                }
+                if (isset($slotData['start_time'])) {
+                    $alaCarteStartTime = $slotData['start_time'];
+                }
+                if (isset($slotData['end_time'])) {
+                    $alaCarteEndTime = $slotData['end_time'];
+                }
+            }
+        }
+
+        if (isGroupClassService($service) && $request->filled('group_class_ids')) {
+            handleGroupClasses($request->group_class_ids, $request->customer, $request->pet, $request->service, $request->staff ?? null);
+        } else {
+            // Create the appointment
+            $appointment = new Appointment;
+            $appointment->customer_id = $request->customer;
+            $appointment->pet_id = $request->pet;
+            $appointment->service_id = $request->service;
+
+            if ($request->filled('staff'))
+                $appointment->staff_id = $request->staff;
+
+            if ($request->filled('date')) {
+                $appointment->date = $request->date;
+
+                if (isAlaCarteService($service) && $alaCarteStartTime && $alaCarteEndTime) {
+                    $appointment->start_time = $alaCarteStartTime;
+                    $appointment->end_time = $alaCarteEndTime;
+                } else {
+                    $appointment->start_time = $timeSlot ? $timeSlot->start_time : null;
+                    $appointment->end_time = $timeSlot ? $timeSlot->end_time : null;
+                }
+            } else if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+                $startDateTime = Carbon::parse($request->boarding_start_datetime);
+                $endDateTime = Carbon::parse($request->boarding_end_datetime);
+
+                $appointment->date = $startDateTime->toDateString();
+                $appointment->start_time = $startDateTime->toTimeString();
+                $appointment->end_date = $endDateTime->toDateString();
+                $appointment->end_time = $endDateTime->toTimeString();
+
+                if (isBoardingService($service)) {
+                    $boardingTotal = getBoardingServicePrice($service, $appointment);
+                    if ($boardingTotal === null) {
+                        $boardingTotal = 0;
+                    }
+
+                    $additionalServicesTotal = 0;
+                    if ($request->filled('additional_services')) {
+                        $pet = PetProfile::find($request->pet);
+                        $petSize = $pet ? $pet->size : 'medium';
+
+                        $additionalServiceIds = $request->additional_services;
+                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
+
+                        foreach ($additionalServices as $addService) {
+                            if (isChauffeurService($addService)) {
+                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
+                            } else {
+                                $additionalServicesTotal += getServicePrice($addService, $petSize);
+                            }
+                        }
+                    }
+
+                    $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
+                }
+            }
+            $appointment->status = 'checked_in';
+
+            $appointment->additional_service_ids = $request->filled('additional_services') ?
+                implode(',', $request->additional_services) : null;
+
+            $appointment->metadata = !empty($metadata) ? $metadata : null;
+            $appointment->save();
+            appointment_audit_log($appointment->id, "Appointment is created.");
+        }
+
+        if ($timeSlot && !is_null($timeSlot->capacity)) {
+            if ($timeSlot->booked_count < $timeSlot->capacity) {
+                $timeSlot->booked_count += 1;
+                if ($timeSlot->booked_count >= $timeSlot->capacity) {
+                    $timeSlot->status = 'full';
+                }
+            } else {
+                $timeSlot->status = 'full';
+            }
+            $timeSlot->save();
+        }
+
+        if (!empty($usedSlotIds)) {
+            $timeSlots = TimeSlot::whereIn('id', $usedSlotIds)->get();
+            foreach ($timeSlots as $timeSlot) {
+                $timeSlot->booked_count += 1;
+                if ($timeSlot->booked_count >= $timeSlot->capacity) {
+                    $timeSlot->status = 'full';
+                }
+                $timeSlot->save();
+            }
+        }
+
+        return redirect()->route('appointments')->with([
+            'message' => 'Appointment created successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function generateInvoiceNumber()
+    {
+        $invoiceNumber = Invoice::generateInvoiceNumber();
+        return response()->json(['invoice_number' => $invoiceNumber]);
+    }
+
+    public function createPackageAppointment(Request $request)
+    {
+        $request->validate([
+            'customer' => 'required|exists:users,id',
+            'pet' => 'required|exists:pet_profiles,id',
+            'service' => 'required|exists:services,id',
+            'date' => 'required|date',
+            'package_id' => 'required|exists:packages,id',
+            'customer_package_id' => 'nullable|exists:customer_packages,id',
+        ]);
+
+        $service = Service::with('category')->find($request->service);
+        $package = Package::find($request->package_id);
+
+        if (!isPackageService($service) || !$package) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid package or service.'
+            ], 422);
+        }
+
+        $pet = PetProfile::find($request->pet);
+        if (!$pet) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Pet not found.'
+            ], 422);
+        }
+
+        // Validation warnings (not blocking for admin)
+        $validationWarnings = [];
+        if ($package->service_ids) {
+            $serviceIds = array_map('trim', explode(',', $package->service_ids));
+            $packageServices = Service::whereIn('id', $serviceIds)->with('category')->get();
+
+            $requiredCategories = [];
+
+            foreach ($packageServices as $packageService) {
+                if (isGroupClassService($packageService)) {
+                    continue;
+                }
+
+                if ($packageService->category) {
+                    $requiredCategories[$packageService->category->id] = $packageService->category;
+                }
+            }
+
+            foreach ($requiredCategories as $category) {
+                $categoryQuestionnaire = Questionnaire::where('pet_id', $pet->id)
+                    ->where('user_id', $pet->user_id)
+                    ->where('service_category_id', $category->id)
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+                if (!$categoryQuestionnaire || $categoryQuestionnaire->status !== 'approved') {
+                    $validationWarnings[] = 'Pet questionnaire for ' . $category->name . ' is not approved.';
+                }
+            }
+        }
+
+        $appointment = new Appointment;
+        $appointment->customer_id = $request->customer;
+        $appointment->pet_id = $request->pet;
+        $appointment->service_id = $request->service;
+        $appointment->date = $request->date;
+        $appointment->additional_service_ids = $package->service_ids;
+        $appointment->estimated_price = floatval($package->price ?? 0);
+
+        $days = intval($package->days ?? 0);
+        if ($days > 0) {
+            $startDate = Carbon::parse($request->date);
+            $endDate = $startDate->copy()->addDays(max(0, $days - 1));
+            $appointment->end_date = $endDate->toDateString();
+        }
+
+        $metadata = [
+            'package_id' => (string)$package->id
+        ];
+        
+        // Handle customer package if provided
+        if ($request->filled('customer_package_id')) {
+            $customerPackage = CustomerPackage::find($request->customer_package_id);
+            if ($customerPackage && $customerPackage->customer_id == $request->customer) {
+                $metadata['customer_package_id'] = (string)$customerPackage->id;
+            }
+        }
+        
+        $appointment->metadata = $metadata;
+        $appointment->status = 'checked_in';
+        $appointment->save();
+        appointment_audit_log($appointment->id, "Appointment is created.");
+
+        $message = 'Package appointment created successfully.';
+        if (!empty($validationWarnings)) {
+            $message .= ' ' . implode(' ', $validationWarnings);
+        }
+
+        return redirect()->route('appointments')->with([
+            'message' => $message,
+            'status' => 'success'
+        ]);
+    }
+
+    private function createInvoiceForAppointment($appointment, $request)
+    {
+        $existingInvoice = Invoice::where('invoice_number', $request->invoice_number)->first();
+        if ($existingInvoice) {
+            return;
+        }
+
+        $invoice = new Invoice;
+        $invoice->appointment_id = $appointment->id;
+        $invoice->customer_id = $appointment->customer_id;
+        $invoice->invoice_number = $request->invoice_number;
+        $invoice->first_name = $request->first_name;
+        $invoice->last_name = $request->last_name;
+        $invoice->email = $request->email;
+        $invoice->issued_at = $request->issued_at ? Carbon::parse($request->issued_at) : Carbon::now();
+        $invoice->due_date = $request->due_date ? Carbon::parse($request->due_date) : null;
+
+        if ($request->status === 'paid' && !$request->paid_at) {
+            $invoice->paid_at = Carbon::now();
+        } else {
+            $invoice->paid_at = $request->paid_at ? Carbon::parse($request->paid_at) : null;
+        }
+
+        $invoice->status = $request->status;
+        $invoice->notes = $request->notes;
+        $invoice->save();
+        appointment_audit_log($appointment->id, "Invoice status changed to " . ucfirst($invoice->status) . ". Invoice #{$invoice->invoice_number}.");
+
+        if ($request->filled('items') && is_array($request->items)) {
+            foreach ($request->items as $itemData) {
+                $item = new InvoiceItem;
+                $item->invoice_id = $invoice->id;
+                $item->item_name = $itemData['description'] ?? '';
+                $item->price = $itemData['price'] ?? 0;
+                $item->item_type = $itemData['type'] ?? 'service';
+                $item->save();
+            }
+        }
+
+        if ($request->status === 'paid' && $request->payment_amount && $request->payment_method) {
+            $transaction = new Transaction;
+            $transaction->appointment_id = $appointment->id;
+            $transaction->invoice_id = $invoice->id;
+            $transaction->user_id = $appointment->customer_id;
+            $transaction->tran_date = $invoice->paid_at ?: Carbon::now();
+            $transaction->amount = $request->payment_amount;
+            $transaction->payment_method = $request->payment_method;
+            $transaction->notes = $request->payment_notes;
+            $transaction->save();
+        }
+    }
+
+    public function edit($id)
+    {
+        $appointment = Appointment::findOrFail($id);
+        $services = Service::where('status', 'active')->where('level', 'primary')->get();
+        $additionalServices = Service::where('status', 'active')->whereNot('id', $appointment->service_id)->get();
+
+        $service = Service::with('category')->find($appointment->service_id);
+
+        $timeSlots = collect([]);
+
+        if (isAlaCarteService($service) && $appointment->metadata && isset($appointment->metadata['secondary_service_ids']) && $appointment->date) {
+            $pet = PetProfile::find($appointment->pet_id);
+            $petSize = $pet ? $pet->size : 'medium';
+            $secondaryServiceIds = explode(',', $appointment->metadata['secondary_service_ids']);
+            $timeSlots = $this->getAlaCarteTimeSlots($appointment->service_id, $appointment->date, $petSize, $secondaryServiceIds);
+        } else {
+            $query = TimeSlot::where('service_id', $appointment->service_id)->whereDate('date', $appointment->date);
+
+            if (isGroomingService($service)) {
+                $pet = PetProfile::find($appointment->pet_id);
+                $petSize = $pet ? $pet->size : 'medium';
+                $query->where('pet_size', $petSize);
+            } else if (isDaycareService($service)) {
+                $query->where('daycare_type', $appointment->metadata['daycare_duration'] === 'full_day' ? 'full' : 'half');
+            } else if (isPrivateTrainingService($service)) {
+                $query->where('private_training_type', $appointment->metadata['private_training_duration'] === 'one_hour' ? 'one' : 'half');
+            }
+
+            $timeSlots = $query->orderBy('start_time')->get();
+        }
+        $groupClasses = GroupClass::where('status', 'active')->orderBy('started_at', 'desc')->get();
+
+
+        $secondaryServices = Service::where('status', 'active')
+            ->where('level', 'secondary')
+            ->whereHas('category', function($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%groom%']);
+            })
+            ->with('category')
+            ->get();
+
+        $packages = Package::where('status', 'active')->orderBy('created_at', 'desc')->get();
+
+        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'groupClasses', 'secondaryServices', 'packages'));
+    }
+
+    public function update(Request $request)
+    {
+        $request->validate([
+            'appointment_id' => 'required|exists:appointments,id',
+            'customer' => 'required|exists:users,id',
+            'pet' => 'required|exists:pet_profiles,id',
+            'service' => 'required|exists:services,id',
+            'staff' => 'nullable|exists:users,id',
+            'date' => 'nullable|date',
+            'time_slot' => 'nullable',
+            'additional_services' => 'nullable|array',
+            'additional_services.*' => 'exists:services,id',
+            'secondary_services' => 'nullable|array',
+            'secondary_services.*' => 'exists:services,id',
+            'group_class_ids' => 'nullable|array',
+            'group_class_ids.*' => 'exists:group_classes,id',
+        ]);
+
+        $timeSlot = TimeSlot::with('service.category')->find($request->time_slot);
+
+        $metadata = [];
+        if ($timeSlot) {
+            if (isDaycareService($timeSlot->service)) {
+                if ($timeSlot->daycare_type) {
+                    $metadata['daycare_duration'] = $timeSlot->daycare_type === 'full' ? 'full_day' : 'half_day';
+
+                    if ($timeSlot->daycare_type === 'half') {
+                        $startTime = Carbon::parse($timeSlot->start_time);
+                        $metadata['session'] = $startTime->hour < 13 ? 'morning' : 'afternoon';
+                    }
+                }
+            }
+            if (isPrivateTrainingService($timeSlot->service)) {
+                if ($timeSlot->private_training_type) {
+                    $metadata['private_training_duration'] = $timeSlot->private_training_type === 'one' ? 'one_hour' : 'half_hour';
+                }
+            }
+        }
+
+        $service = Service::with('category')->find($request->service);
+        if ($request->has('secondary_services')) {
+            $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
+        }
+
+        // Handle ala carte service slot data
+        $alaCarteStartTime = null;
+        $alaCarteEndTime = null;
+        if (isAlaCarteService($service) && $request->filled('time_slot_data')) {
+            $slotData = json_decode($request->time_slot_data, true);
+            if ($slotData) {
+                if (isset($slotData['used_slot_ids'])) {
+                    $metadata['used_slot_ids'] = implode(',', $slotData['used_slot_ids']);
+                }
+                if (isset($slotData['start_time'])) {
+                    $alaCarteStartTime = $slotData['start_time'];
+                }
+                if (isset($slotData['end_time'])) {
+                    $alaCarteEndTime = $slotData['end_time'];
+                }
+            }
+        }
+
+        $appointment = Appointment::findOrFail($request->appointment_id);
+        $oldStatus = $appointment->status;
+        $appointment->customer_id = $request->customer;
+        $appointment->pet_id = $request->pet;
+        $appointment->service_id = $request->service;
+        if ($request->filled('staff'))
+            $appointment->staff_id = $request->staff; // Optional
+        else
+            $appointment->staff_id = null;
+
+        if (!isGroupClassService($service)) {
+            if ($request->filled('date')) {
+                $appointment->date = $request->date;
+                // For ala carte services, use the calculated start_time and end_time from slot data
+                if (isAlaCarteService($service) && $alaCarteStartTime && $alaCarteEndTime) {
+                    $appointment->start_time = $alaCarteStartTime;
+                    $appointment->end_time = $alaCarteEndTime;
+                } else {
+                    $appointment->start_time = $timeSlot ? $timeSlot->start_time : null;
+                    $appointment->end_time = $timeSlot ? $timeSlot->end_time : null;
+                }
+            } else if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+                $startDateTime = Carbon::parse($request->boarding_start_datetime);
+                $endDateTime = Carbon::parse($request->boarding_end_datetime);
+
+                $appointment->date = $startDateTime->toDateString();
+                $appointment->start_time = $startDateTime->toTimeString();
+                $appointment->end_date = $endDateTime->toDateString();
+                $appointment->end_time = $endDateTime->toTimeString();
+
+                if (isBoardingService($service)) {
+                    $boardingTotal = getBoardingServicePrice($service, $appointment);
+                    if ($boardingTotal === null) {
+                        $boardingTotal = 0;
+                    }
+
+                    $additionalServicesTotal = 0;
+                    if ($request->filled('additional_services')) {
+                        $pet = PetProfile::find($request->pet);
+                        $petSize = $pet ? $pet->size : 'medium';
+
+                        $additionalServiceIds = $request->additional_services;
+                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
+
+                        foreach ($additionalServices as $addService) {
+                            if (isChauffeurService($addService)) {
+                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
+                            } else {
+                                $additionalServicesTotal += getServicePrice($addService, $petSize);
+                            }
+                        }
+                    }
+
+                    $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
+                }
+            }
+
+            $appointment->additional_service_ids = $request->filled('additional_services') ? implode(',', $request->additional_services) : null;
+            if (!isPackageService($service)) {
+                $appointment->metadata = !empty($metadata) ? $metadata : null;
+            }
+        }
+
+        if ($request->filled('status')) {
+            $newStatus = $request->status;
+            if (in_array($newStatus, ['cancelled', 'no_show'])) {
+                $appointment->status = $newStatus;
+                if ($oldStatus !== $newStatus) {
+                    appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label($newStatus, $appointment->service) . ".");
+                    $this->saveCancellationRecord($appointment, $newStatus);
+                    $this->releaseTimeSlots($appointment);
+                }
+            }
+        }
+
+        $appointment->save();
+        if ($oldStatus !== $appointment->status && !in_array($appointment->status, ['cancelled', 'no_show'])) {
+            $label = $appointment->status === 'checked_in' ? "Appointment is created." : "Appointment status changed to " . appointment_status_label($appointment->status, $appointment->service) . ".";
+            appointment_audit_log($appointment->id, $label);
+        } elseif ($oldStatus === $appointment->status) {
+            appointment_audit_log($appointment->id, "Appointment updated.");
+        }
+
+        return redirect()->route('appointments')->with([
+            'message' => 'Appointment updated successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function delete(Request $request)
+    {
+        $request->validate([
+            'appointment_id' => 'required|exists:appointments,id',
+        ]);
+
+        $appointment = Appointment::find($request->appointment_id);
+        $appointmentId = $appointment->id;
+
+        $this->releaseTimeSlots($appointment);
+
+        appointment_audit_log($appointmentId, "Appointment deleted.");
+        $appointment->delete();
+
+        return redirect()->route('appointments')->with([
+            'message' => 'Appointment deleted successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function confirmPending(Request $request)
+    {
+        $request->validate([
+            'id' => 'required|exists:appointments,id',
+            'staff_id' => 'required|exists:users,id',
+            'estimated_price' => 'required|numeric|min:0',
+        ]);
+
+        // Update the appointment
+        $id = $request->id;
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return redirect()->back()->with([
+                'message' => 'Appointment not found.',
+                'status' => 'fail'
+            ]);
+        }
+
+        $appointment->staff_id = $request->staff_id;
+        $appointment->estimated_price = $request->estimated_price;
+        $appointment->status = 'checked_in';
+        $appointment->save();
+
+        // Update the time slot to booked if exists
+        $timeSlots = TimeSlot::where('service_id', $appointment->service_id)
+            ->whereDate('date', $appointment->date)
+            ->where(function ($query) use ($appointment) {
+                $query->where('start_time', $appointment->start_time)
+                      ->orWhere('end_time', $appointment->end_time);
+            })->get();
+        foreach ($timeSlots as $timeSlot) {
+            if ($timeSlot->booked_count < $timeSlot->capacity) {
+                $timeSlot->booked_count += 1;
+                if ($timeSlot->booked_count == $timeSlot->capacity) {
+                    $timeSlot->status = 'full';
+                }
+            } else {
+                $timeSlot->status = 'full';
+            }
+            $timeSlot->save();
+        }
+
+        // Save or update the questionnaire if provided
+        $questionnaireData = $request->questionnaire;
+        if ($questionnaireData) {
+            $questionnaire = Questionnaire::where('appointment_id', $appointment->id)->first();
+            if (!$questionnaire) {
+                $questionnaire = new Questionnaire;
+            }
+            $questionnaire->appointment_id = $appointment->id;
+            $questionnaire->questions_answers = $questionnaireData;
+            $questionnaire->save();
+        }
+
+        // Create a check-in record
+        $checkIn = Checkin::where('appointment_id', $appointment->id)->first();
+        if (!$checkIn) {
+            $checkIn = new Checkin;
+            $checkIn->appointment_id = $appointment->id;
+        }
+        // Update appointment start_time if not already set
+        if (!$appointment->start_time) {
+            $appointment->start_time = Carbon::now()->format('H:i:s');
+            $appointment->save();
+        }
+        $checkIn->save();
+        appointment_audit_log($appointment->id, "Appointment is created.");
+
+        return redirect()->route('service-dashboard', ['id' => $appointment->service_id])->with([
+            'message' => 'Appointment has been confirmed successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function updateCheckinFlows(Request $request, $id)
+    {
+        $request->validate([
+            'flows' => 'required|array'
+        ]);
+
+        $checkIn = Checkin::where('appointment_id', $id)->first();
+        if (!$checkIn) {
+            $checkIn = new Checkin;
+            $checkIn->appointment_id = $id;
+        }
+
+        $appointment = Appointment::with('pet')->find($id);
+        if (!$appointment) {
+            return redirect()->back()->with([
+                'message' => 'Appointment not found.',
+                'status' => 'fail'
+            ]);
+        }
+
+        if ((isGroomingService($appointment->service) || isAlaCarteService($appointment->service)) && $appointment->pet) {
+            $temperamentFields = ['initial_greeting', 'touch_body', 'touch_legs', 'touch_feet', 'touch_tail', 'touch_face', 'touch_nails'];
+
+            $isTemperamentData = false;
+            foreach ($temperamentFields as $field) {
+                if (isset($request->flows[$field])) {
+                    $isTemperamentData = true;
+                    break;
+                }
+            }
+
+            if ($isTemperamentData) {
+                $temperamentData = [];
+                foreach ($temperamentFields as $field) {
+                    if (isset($request->flows[$field])) {
+                        $temperamentData[$field] = $request->flows[$field];
+                    }
+                }
+
+                $initialTemperament = PetInitialTemperament::where('pet_id', $appointment->pet->id)->first();
+
+                if ($initialTemperament) {
+                    $initialTemperament->temperament_data = $temperamentData;
+                    $initialTemperament->save();
+                } else {
+                    PetInitialTemperament::create([
+                        'pet_id' => $appointment->pet->id,
+                        'temperament_data' => $temperamentData
+                    ]);
+                }
+            }
+        }
+
+        $checkIn->flows = json_encode($request->flows);
+        $checkIn->save();
+
+        if (isPrivateTrainingService($appointment->service) && $checkIn->flows) {
+            $flows = json_decode($checkIn->flows, true);
+
+            if (!empty($flows['additional_services_link'])) {
+                $additionalServicesLink = $flows['additional_services_link'];
+
+                if (is_array($additionalServicesLink)) {
+                    $appointment->additional_service_ids = implode(',', $additionalServicesLink);
+                } else {
+                    $appointment->additional_service_ids = $additionalServicesLink;
+                }
+
+                $appointment->save();
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Temperament data saved successfully'
+        ]);
+    }
+
+    public function confirmCheckedIn(Request $request, $id)
+    {
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return redirect()->back()->with([
+                'message' => 'Appointment not found.',
+                'status' => 'fail'
+            ]);
+        }
+
+        $isPackageAppointment = $appointment->service && isPackageService($appointment->service);
+        $isBoardingService = $appointment->service && isBoardingService($appointment->service);
+
+        $validationRules = [
+            'staff_id' => 'nullable|exists:users,id',
+            'date' => 'required|date',
+            'start_time' => 'required|string',
+            'notes' => 'nullable|string|max:1000',
+        ];
+
+        if ($isPackageAppointment) {
+            $validationRules['estimated_price'] = 'nullable|numeric|min:0';
+            $validationRules['pickup_time'] = 'nullable|string';
+        } elseif ($isBoardingService) {
+            $validationRules['estimated_price'] = 'required|numeric|min:0';
+            $validationRules['pickup_time'] = 'nullable|string';
+        } else {
+            $validationRules['estimated_price'] = 'required|numeric|min:0';
+            $validationRules['pickup_time'] = 'required|string';
+        }
+
+        $request->validate($validationRules);
+
+        if ($request->filled('staff_id')) {
+            $appointment->staff_id = $request->staff_id;
+        }
+
+        if ($request->filled('estimated_price')) {
+            $appointment->estimated_price = $request->estimated_price;
+        }
+
+        $appointment->date = $request->date;
+        $appointment->start_time = $request->start_time;
+
+        if ($request->filled('pickup_time')) {
+            $appointment->end_time = $request->pickup_time;
+        }
+
+        // Update appointment status to in_progress
+        $appointment->status = 'in_progress';
+        $appointment->save();
+        appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label('in_progress', $appointment->service) . ".");
+
+        // Update or create check-in record
+        $checkIn = Checkin::where('appointment_id', $appointment->id)->first();
+        if (!$checkIn) {
+            $checkIn = new Checkin;
+            $checkIn->appointment_id = $appointment->id;
+        }
+
+        $checkIn->date = $request->date;
+        $checkIn->notes = $request->notes;
+        $checkIn->save();
+
+        if (!$isBoardingService) {
+            $process = Process::where('appointment_id', $appointment->id)->first();
+            if (!$process) {
+                $process = new Process;
+                $process->appointment_id = $appointment->id;
+            }
+            $process->date = $appointment->date;
+            $process->start_time = $appointment->start_time;
+            $process->save();
+        }
+
+        return redirect()->route('service-dashboard', ['id' => $appointment->service_id])->with([
+            'message' => 'Appointment has been started successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function viewCalendar(Request $request)
+    {
+        $serviceId = $request->get('service');
+
+        $appointmentsQuery = Appointment::with(['pet', 'customer.profile', 'service']);
+
+        if ($serviceId) {
+            $appointmentsQuery->where('service_id', $serviceId);
+        }
+
+        $appointments = $appointmentsQuery->get();
+
+        $expandedAppointments = collect();
+
+        $appointments->each(function ($appointment) use (&$expandedAppointments) {
+            $appointment->pet_name = $appointment->pet->name ?? '';
+
+            $profile = optional(optional($appointment->customer)->profile);
+            $firstName = $profile->first_name ?? '';
+            $lastName = $profile->last_name ?? '';
+            $appointment->customer_name = trim($firstName . ' ' . $lastName);
+
+            $appointment->service_name = $appointment->service->name ?? '';
+
+            if (isGroupClassService($appointment->service)) {
+                $appointment->class_name = optional(GroupClass::find($appointment->metadata['group_class_ids'] ?? null))->name ?? '';
+            }
+
+            // Boarding: expand to all days in range
+            if ((strtolower($appointment->service_name) === 'boarding' || strtolower($appointment->service_name) === 'package') && $appointment->date && $appointment->end_date) {
+                try {
+                    $start = \Carbon\Carbon::parse($appointment->date);
+                    $end = \Carbon\Carbon::parse($appointment->end_date);
+                } catch (\Exception $e) {
+                    $expandedAppointments->push($appointment);
+                    return;
+                }
+                if ($end->lessThan($start)) {
+                    $expandedAppointments->push($appointment);
+                    return;
+                }
+                for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                    $clone = clone $appointment;
+                    $clone->date = $date->format('Y-m-d');
+                    // For boarding and package, do not use end_time for daily display
+
+                    $clone->start_time = null; 
+                    $clone->end_time = null; 
+                    $expandedAppointments->push($clone);
+                }
+
+                // for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                //     $clone = clone $appointment;
+                //     $clone->date = $date->format('Y-m-d');
+
+                //     if ($date->eq($end)) {
+                //         // Last day
+                //         $clone->start_time = "08:00:00";
+                //         $clone->end_time = $appointment->end_time;
+                //     } else {
+                //         // Other days
+                //         $clone->start_time = null;
+                //         $clone->end_time = null;
+                //     }
+
+                //     $expandedAppointments->push($clone);
+                // }
+                
+            } else {
+                // All other services: single entry
+                $expandedAppointments->push($appointment);
+            }
+        });
+
+        $services = Service::where('status', 'active')
+            ->where('level', 'primary')
+            ->get();
+
+        return view('appointments.calendar', [
+            'appointments' => $expandedAppointments,
+            'services' => $services,
+            'serviceId' => $serviceId,
+        ]);
+    }
+
+    public function updateProcessFlows(Request $request, $id)
+    {
+        $request->validate([
+            'flows' => 'required|array'
+        ]);
+
+        $workflowDate = $request->input('workflow_date');
+        $serviceId = $request->input('service_id');
+
+        if ($serviceId && $workflowDate) {
+            $process = Process::where('appointment_id', $id)
+                ->where('date', $workflowDate)
+                ->where('detail_id', $serviceId)
+                ->first();
+
+            if (!$process) {
+                $process = Process::where('appointment_id', $id)
+                    ->where('date', $workflowDate)
+                    ->whereNull('detail_id')
+                    ->where(function($query) {
+                        $query->whereNull('flows')
+                              ->orWhere('flows', '')
+                              ->orWhereRaw("(flows IS NOT NULL AND JSON_EXTRACT(flows, '$.service_id') IS NULL)");
+                    })
+                    ->first();
+            }
+
+            if (!$process) {
+                $process = new Process;
+                $process->appointment_id = $id;
+                $process->date = $workflowDate;
+                $process->detail_id = $serviceId;
+            } else {
+                if (!$process->detail_id) {
+                    $process->detail_id = $serviceId;
+                }
+            }
+
+            if ($request->has('start_time')) {
+                $process->start_time = $request->input('start_time');
+            }
+            if ($request->has('pickup_time')) {
+                $process->pickup_time = $request->input('pickup_time');
+            }
+            if ($request->has('notes')) {
+                $process->notes = $request->input('notes');
+            }
+            if ($request->has('staff_id')) {
+                $process->staff_id = $request->input('staff_id');
+            }
+
+            $existingFlows = $process->flows ? json_decode($process->flows, true) : [];
+            if (!is_array($existingFlows)) {
+                $existingFlows = [];
+            }
+            $existingFlows = array_merge($existingFlows, $request->flows);
+            $process->flows = json_encode($existingFlows);
+        } elseif ($workflowDate) {
+            $process = Process::where('appointment_id', $id)
+                ->where('date', $workflowDate)
+                ->first();
+
+            if (!$process) {
+                $process = new Process;
+                $process->appointment_id = $id;
+                $process->date = $workflowDate;
+            }
+
+            $process->flows = json_encode($request->flows);
+
+            if ($request->has('staff_id')) {
+                $process->staff_id = $request->input('staff_id');
+            }
+        } else {
+            $process = Process::where('appointment_id', $id)->first();
+            if (!$process) {
+                $process = new Process;
+                $process->appointment_id = $id;
+            }
+
+            $existingFlows = $process->flows ? json_decode($process->flows, true) : [];
+            if (!is_array($existingFlows)) {
+                $existingFlows = [];
+            }
+
+            $existingFlows = array_merge($existingFlows, $request->flows);
+            $process->flows = json_encode($existingFlows);
+
+            if ($request->has('staff_id')) {
+                $process->staff_id = $request->input('staff_id');
+            }
+        }
+
+        $process->save();
+
+        $appointment = Appointment::find($id);
+        $updatedRemainingDays = null;
+        if ($appointment && $appointment->metadata && isset($appointment->metadata['customer_package_id'])) {
+            $customerPackageId = $appointment->metadata['customer_package_id'];
+            $customerPackage = CustomerPackage::find($customerPackageId);
+            
+            if ($customerPackage) {
+                $maxProcessCount = Process::where('appointment_id', $id)
+                    ->whereNotNull('date')
+                    ->whereNotNull('detail_id')
+                    ->selectRaw('detail_id, COUNT(*) as count')
+                    ->groupBy('detail_id')
+                    ->get()
+                    ->max('count') ?? 0;
+                
+                $uniqueDatesCount = $maxProcessCount;
+                
+                $newRemainingDays = max(0, $customerPackage->original_days - $uniqueDatesCount);
+                
+                $customerPackage->remaining_days = $newRemainingDays;
+                $customerPackage->save();
+                
+                $updatedRemainingDays = $newRemainingDays;
+            }
+        }
+
+        $response = [
+            'status' => true,
+            'success' => true,
+            'message' => 'Process data saved successfully'
+        ];
+        
+        if ($updatedRemainingDays !== null) {
+            $response['remaining_days'] = $updatedRemainingDays;
+        }
+        
+        return response()->json($response);
+    }
+
+    public function getProcessFlows(Request $request, $id)
+    {
+        if ($request->input('get_used_dates')) {
+            $usedDates = Process::where('appointment_id', $id)
+                ->whereNotNull('date')
+                ->select('date', 'detail_id')
+                ->groupBy('date', 'detail_id')
+                ->get()
+                ->pluck('date')
+                ->unique()
+                ->values()
+                ->toArray();
+            
+            return response()->json([
+                'used_dates' => $usedDates
+            ]);
+        }
+
+        $workflowDate = $request->input('date');
+        $serviceId = $request->input('service_id'); // For package appointments
+
+        if ($workflowDate) {
+            // For package appointments, find process by service_id and date
+            if ($serviceId) {
+                $process = Process::where('appointment_id', $id)
+                    ->where('date', $workflowDate)
+                    ->where('detail_id', $serviceId)
+                    ->orderBy('updated_at', 'desc')
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+            } else {
+                $process = Process::where('appointment_id', $id)
+                    ->where('date', $workflowDate)
+                    ->orderBy('updated_at', 'desc')
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+            }
+
+            if (!$process) {
+                return response()->json([
+                    'flows' => [],
+                    'staff_id' => null,
+                    'staff_name' => null,
+                    'staff_names' => [],
+                    'start_time' => null,
+                    'pickup_time' => null,
+                    'notes' => null
+                ]);
+            }
+
+            $flows = [];
+            if ($process->flows) {
+                $decodedFlows = json_decode($process->flows, true);
+                if (is_array($decodedFlows)) {
+                    $flows = $decodedFlows;
+                }
+            }
+
+            // Get staff name
+            $staffName = 'N/A';
+            if ($process->staff_id) {
+                $staff = User::with('profile')->find($process->staff_id);
+                if ($staff && $staff->profile) {
+                    $staffName = trim(($staff->profile->first_name ?? '') . ' ' . ($staff->profile->last_name ?? ''));
+                    if (empty($staffName)) {
+                        $staffName = $staff->name ?? 'N/A';
+                    }
+                } elseif ($staff) {
+                    $staffName = $staff->name ?? 'N/A';
+                }
+            }
+
+            $staffSignOffIds = [];
+            foreach ($flows as $stepData) {
+                if (isset($stepData['staff_sign_off']) && is_array($stepData['staff_sign_off'])) {
+                    foreach ($stepData['staff_sign_off'] as $uid) {
+                        if ($uid !== null && $uid !== '') {
+                            $staffSignOffIds[] = is_numeric($uid) ? (int) $uid : $uid;
+                        }
+                    }
+                }
+            }
+            $staffSignOffIds = array_unique($staffSignOffIds);
+            $staffNames = [];
+            if (!empty($staffSignOffIds)) {
+                $users = User::with('profile')->whereIn('id', $staffSignOffIds)->get();
+                foreach ($users as $u) {
+                    $name = 'N/A';
+                    if ($u->profile) {
+                        $name = trim(($u->profile->first_name ?? '') . ' ' . ($u->profile->last_name ?? ''));
+                        if ($name === '') {
+                            $name = $u->name ?? 'N/A';
+                        }
+                    } else {
+                        $name = $u->name ?? 'N/A';
+                    }
+                    $staffNames[(string) $u->id] = $name;
+                }
+            }
+
+            return response()->json([
+                'flows' => $flows,
+                'staff_id' => $process->staff_id,
+                'staff_name' => $staffName,
+                'staff_names' => $staffNames,
+                'start_time' => $process->start_time ? \Carbon\Carbon::createFromFormat('H:i:s', $process->start_time)->format('H:i') : null,
+                'pickup_time' => $process->pickup_time ? \Carbon\Carbon::createFromFormat('H:i:s', $process->pickup_time)->format('H:i') : null,
+                'notes' => $process->notes
+            ]);
+        } else {
+            // If no date specified, get the latest process for the appointment
+            if ($serviceId) {
+                $process = Process::where('appointment_id', $id)
+                    ->where('detail_id', $serviceId)
+                    ->orderBy('updated_at', 'desc')
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+            } else {
+                $process = Process::where('appointment_id', $id)
+                    ->orderBy('updated_at', 'desc')
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+            }
+
+            if (!$process) {
+                return response()->json([
+                    'flows' => [],
+                    'staff_id' => null,
+                    'staff_name' => null,
+                    'staff_names' => [],
+                    'start_time' => null,
+                    'pickup_time' => null,
+                    'notes' => null
+                ]);
+            }
+
+            $flows = [];
+            if ($process->flows) {
+                $decodedFlows = json_decode($process->flows, true);
+                if (is_array($decodedFlows)) {
+                    $flows = $decodedFlows;
+                }
+            }
+
+            // Get staff name
+            $staffName = 'N/A';
+            if ($process->staff_id) {
+                $staff = User::with('profile')->find($process->staff_id);
+                if ($staff && $staff->profile) {
+                    $staffName = trim(($staff->profile->first_name ?? '') . ' ' . ($staff->profile->last_name ?? ''));
+                    if (empty($staffName)) {
+                        $staffName = $staff->name ?? 'N/A';
+                    }
+                } elseif ($staff) {
+                    $staffName = $staff->name ?? 'N/A';
+                }
+            }
+
+            $staffSignOffIds = [];
+            foreach ($flows as $stepData) {
+                if (isset($stepData['staff_sign_off']) && is_array($stepData['staff_sign_off'])) {
+                    foreach ($stepData['staff_sign_off'] as $uid) {
+                        if ($uid !== null && $uid !== '') {
+                            $staffSignOffIds[] = is_numeric($uid) ? (int) $uid : $uid;
+                        }
+                    }
+                }
+            }
+            $staffSignOffIds = array_unique($staffSignOffIds);
+            $staffNames = [];
+            if (!empty($staffSignOffIds)) {
+                $users = User::with('profile')->whereIn('id', $staffSignOffIds)->get();
+                foreach ($users as $u) {
+                    $name = 'N/A';
+                    if ($u->profile) {
+                        $name = trim(($u->profile->first_name ?? '') . ' ' . ($u->profile->last_name ?? ''));
+                        if ($name === '') {
+                            $name = $u->name ?? 'N/A';
+                        }
+                    } else {
+                        $name = $u->name ?? 'N/A';
+                    }
+                    $staffNames[(string) $u->id] = $name;
+                }
+            }
+
+            return response()->json([
+                'flows' => $flows,
+                'staff_id' => $process->staff_id,
+                'staff_name' => $staffName,
+                'staff_names' => $staffNames,
+                'start_time' => $process->start_time ? \Carbon\Carbon::createFromFormat('H:i:s', $process->start_time)->format('H:i') : null,
+                'pickup_time' => $process->pickup_time ? \Carbon\Carbon::createFromFormat('H:i:s', $process->pickup_time)->format('H:i') : null,
+                'notes' => $process->notes
+            ]);
+        }
+    }
+
+    public function confirmInProgress(Request $request, $id)
+    {
+        // Find the appointment
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return redirect()->back()->with([
+                'message' => 'Appointment not found.',
+                'status' => 'fail'
+            ]);
+        }
+
+        $isAlaCarte = isAlaCarteService($appointment->service);
+        $isBoarding = isBoardingService($appointment->service);
+        $isPackage = $appointment->service && isPackageService($appointment->service);
+
+        if (!$isAlaCarte && !$isBoarding && !$isPackage) {
+            $request->validate([
+                'staff_id' => 'required|exists:users,id',
+                'date' => 'required|date',
+                'start_time' => 'required|string',
+                'pickup_time' => 'required|string',
+                'notes' => 'nullable|string|max:1000',
+            ]);
+            $appointment->staff_id = $request->staff_id;
+        }
+
+        // Update appointment status to completed
+        $appointment->status = 'completed';
+        $appointment->save();
+        appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label('completed') . ".");
+
+        if (!$isAlaCarte && !$isBoarding && !$isPackage) {
+            // Update or create process record
+            $process = Process::where('appointment_id', $appointment->id)->first();
+            if (!$process) {
+                $process = new Process;
+                $process->appointment_id = $appointment->id;
+            }
+
+            $process->staff_id = $request->staff_id;
+            $process->date = $request->date;
+            $process->start_time = $request->start_time;
+            $process->pickup_time = $request->pickup_time;
+            $process->notes = $request->notes;
+            $process->save();
+        }
+
+        // $checkout = Checkout::where('appointment_id', $appointment->id)->first();
+        // if (!$checkout) {
+        //     $checkout = new Checkout;
+        //     $checkout->appointment_id = $appointment->id;
+        // }
+        // $checkout->save();
+
+        return redirect()->route('service-dashboard', ['id' => $appointment->service_id])->with([
+            'message' => 'Grooming process has been completed successfully.',
+            'status' => 'success'
+        ]);
+    }
+
+    public function saveInvoice(Request $request, $id)
+    {
+        $request->validate([
+            'invoice_number' => 'required|string',
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'required|email|max:255',
+            'issued_at' => 'nullable|date',
+            'due_date' => 'nullable|date',
+            'paid_at' => 'nullable|date',
+            'status' => 'required|in:draft,sent,paid,void',
+            'notes' => 'nullable|string|max:1000',
+            'items' => 'nullable|array',
+            'discount_title' => 'nullable|string|max:255',
+            'payment_amount' => 'nullable|numeric|min:0',
+            'payment_method' => 'nullable|in:cash,check,cc',
+            'payment_notes' => 'nullable|string|max:1000',
+        ]);
+
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Appointment not found.'
+            ], 404);
+        }
+
+        // Check if invoice already exists for this appointment
+        $invoice = Invoice::where('appointment_id', $appointment->id)->first();
+         if (!$invoice) {
+            $invoice = new Invoice;
+            $invoice->appointment_id = $appointment->id;
+        }
+
+        // Check if invoice number is unique (except for current invoice)
+        $existingInvoice = Invoice::where('invoice_number', $request->invoice_number)
+            ->where('id', '!=', $invoice->id ?? 0)
+            ->first();
+        if ($existingInvoice) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invoice number already exists.'
+            ], 422);
+        }
+
+        $invoice->customer_id = $appointment->customer_id;
+        $invoice->invoice_number = $request->invoice_number;
+        $invoice->first_name = $request->first_name;
+        $invoice->last_name = $request->last_name;
+        $invoice->email = $request->email;
+        $invoice->issued_at = $request->issued_at ? Carbon::parse($request->issued_at) : null;
+        $invoice->due_date = $request->due_date ? Carbon::parse($request->due_date) : null;
+        if ($request->status !== "draft") {
+            $invoice->discount_amount = $request->discount_amount ?? 0;
+            $invoice->discount_title = $request->discount_title ?? '';
+        }
+
+        if ($request->status === 'paid' && !$request->paid_at) {
+            $invoice->paid_at = Carbon::now();
+        } else {
+            $invoice->paid_at = $request->paid_at ? Carbon::parse($request->paid_at) : null;
+        }
+        $invoice->status = $request->status;
+        $invoice->notes = $request->notes;
+        $invoice->save();
+        appointment_audit_log($appointment->id, "Invoice status changed to " . ucfirst($invoice->status) . ". Invoice #{$invoice->invoice_number}.");
+
+        // Save invoice items
+        $items = $request->items;
+        $itemsForEmail = [];
+        if ($items && is_array($items)) {
+            // Delete existing items
+            InvoiceItem::where('invoice_id', $invoice->id)->delete();
+            // Add new items
+            foreach ($items as $itemData) {
+                $item = new InvoiceItem;
+                $item->invoice_id = $invoice->id;
+                $item->item_name = $itemData['description'] ?? '';
+                $item->price = $itemData['price'] ?? 0;
+                $item->item_type = $itemData['type'] ?? 'service';
+                $item->save();
+                $itemsForEmail[] = [
+                    'description' => $itemData['description'] ?? '',
+                    'price' => $itemData['price'] ?? 0
+                ];
+            }
+        }
+
+        $discountInfo = [
+            'discount_title' => $request->discount_title,
+            'discount_amount' => $request->discount_amount ?? 0
+        ];
+
+        if ($request->status === 'paid' && $request->payment_amount && $request->payment_method) {
+            $transaction = new Transaction;
+            $transaction->appointment_id = $appointment->id;
+            $transaction->invoice_id = $invoice->id;
+            $transaction->user_id = $appointment->customer_id;
+            $transaction->tran_date = $invoice->paid_at ?: Carbon::now();
+            $transaction->amount = $request->payment_amount;
+            $transaction->payment_method = $request->payment_method;
+            $transaction->notes = $request->payment_notes;
+            $transaction->save();
+            $this->sendInvoiceEmail($invoice, $appointment, $request->items, $discountInfo);
+        }
+
+        if ($request->status === 'sent' || ($request->status === 'paid' && $request->payment_amount)) {
+            $this->sendInvoiceEmail($invoice, $appointment, $request->items, $discountInfo);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => $request->status === 'sent' ? 'Invoice saved and sent successfully.' : ($request->status === 'paid' && $request->payment_amount ? 'Invoice saved and payment recorded successfully.' : 'Invoice saved successfully.'),
+            'invoice_id' => $invoice->id
+        ]);
+    }
+
+    private function sendInvoiceEmail($invoice, $appointment, $items, $discountInfo = [])
+    {
+        $mainServiceItems = [];
+        $additionalServiceItems = [];
+        $inventoryItems = [];
+
+        $appointment->load('service.category');
+        $mainServiceName = $appointment->service->name ?? '';
+
+        $additionalServiceNames = [];
+        if ($appointment->additional_service_ids) {
+            $additionalIds = explode(',', $appointment->additional_service_ids);
+            $additionalServices = Service::whereIn('id', $additionalIds)->get();
+            $additionalServiceNames = $additionalServices->pluck('name')->toArray();
+        }
+
+        $groupClassNames = [];
+        if (isGroupClassService($appointment->service) && $appointment->metadata && isset($appointment->metadata['group_class_ids'])) {
+            $groupClassIds = explode(',', $appointment->metadata['group_class_ids']);
+            $groupClasses = GroupClass::whereIn('id', $groupClassIds)->get();
+            $groupClassNames = $groupClasses->pluck('name')->toArray();
+        }
+
+        $totalServicePrice = 0;
+        $totalInventoryAmount = 0;
+
+        if ($items && is_array($items)) {
+            foreach ($items as $itemData) {
+                $itemType = $itemData['type'] ?? 'service';
+                $itemDescription = $itemData['description'] ?? '';
+                $itemPrice = floatval($itemData['price'] ?? 0);
+
+                if ($itemType === 'inventory') {
+                    $inventoryItems[] = [
+                        'description' => $itemDescription,
+                        'price' => $itemPrice
+                    ];
+                    $totalInventoryAmount += $itemPrice;
+                } elseif ($itemType === 'service') {
+                    if (isGroupClassService($appointment->service) && in_array($itemDescription, $groupClassNames)) {
+                        $mainServiceItems[] = [
+                            'description' => $itemDescription,
+                            'price' => $itemPrice
+                        ];
+                    } elseif ($itemDescription === $mainServiceName) {
+                        $mainServiceItems[] = [
+                            'description' => $itemDescription,
+                            'price' => $itemPrice
+                        ];
+                    } elseif (in_array($itemDescription, $additionalServiceNames)) {
+                        $additionalServiceItems[] = [
+                            'description' => $itemDescription,
+                            'price' => $itemPrice
+                        ];
+                    } else {
+                        $mainServiceItems[] = [
+                            'description' => $itemDescription,
+                            'price' => $itemPrice
+                        ];
+                    }
+                    $totalServicePrice += $itemPrice;
+                }
+            }
+        }
+
+        $estimatedPrice = floatval($appointment->estimated_price ?? 0);
+        $discountAmount = floatval($discountInfo['discount_amount'] ?? 0);
+        $totalAmount = max(0, $estimatedPrice - $discountAmount + $totalInventoryAmount);
+
+        $emailData = [
+            'invoice_number' => $invoice->invoice_number,
+            'first_name' => $invoice->first_name,
+            'last_name' => $invoice->last_name,
+            'issued_at' => $invoice->issued_at,
+            'due_date' => $invoice->due_date,
+            'status' => $invoice->status,
+            'notes' => $invoice->notes,
+            'main_service_items' => $mainServiceItems,
+            'additional_service_items' => $additionalServiceItems,
+            'inventory_items' => $inventoryItems,
+            'total_service_price' => $totalServicePrice,
+            'estimated_price' => $estimatedPrice,
+            'discount_title' => $discountInfo['discount_title'] ?? null,
+            'discount_amount' => $discountAmount,
+            'total_inventory_amount' => $totalInventoryAmount,
+            'total' => $totalAmount,
+            'total_amount' => $totalAmount
+        ];
+
+        Mail::to($invoice->email)->send(new InvoiceMail($emailData));
+    }
+
+    public function sendCustomerEmail(Request $request, $id)
+    {
+        $request->validate([
+            'message' => 'required|string|max:5000',
+        ]);
+
+        $appointment = Appointment::with('customer.profile')->find($id);
+        if (!$appointment || !$appointment->customer || empty($appointment->customer->email)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer email not found for this appointment.'
+            ], 404);
+        }
+
+        $customerEmail = $appointment->customer->email;
+        $customerName = trim((($appointment->customer->profile->first_name ?? '') . ' ' . ($appointment->customer->profile->last_name ?? '')));
+        $customerName = $customerName ?: ($appointment->customer->name ?? 'Customer');
+        $body = trim($request->message);
+
+        try {
+            $senderName = 'PawPrints Admin Team';
+            if (Auth::check()) {
+                $authUser = Auth::user()->load('profile');
+                $profileName = trim((($authUser->profile->first_name ?? '') . ' ' . ($authUser->profile->last_name ?? '')));
+                $senderName = $profileName ?: ($authUser->name ?? $senderName);
+            }
+
+            $subject = 'Message from PawPrints Admin';
+            $messageData = [
+                'subject' => $subject,
+                'customer_name' => $customerName,
+                'message' => $body,
+                'sender_name' => $senderName,
+            ];
+
+            Mail::to($customerEmail)->send(new AdminCustomerMessage($messageData));
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Email sent successfully.'
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to send email. Please try again.'
+            ], 500);
+        }
+    }
+
+    public function sendCustomerNotification(Request $request, $id)
+    {
+        $request->validate([
+            'message' => 'required|string|max:5000',
+        ]);
+
+        $appointment = Appointment::with('customer')->find($id);
+        if (!$appointment || !$appointment->customer) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer not found for this appointment.'
+            ], 404);
+        }
+
+        $notification = new Notification;
+        $notification->user_id = $appointment->customer->id;
+        $notification->sender_id = Auth::id();
+        $notification->title = 'New Message from Admin';
+        $notification->message = trim($request->message);
+        $notification->type = 'admin_message';
+        $notification->is_read = false;
+        $notification->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Notification sent successfully.'
+        ], 200);
+    }
+
+    public function confirmCompleted(Request $request, $id)
+    {
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return response()->json([
+                'status' => 'fail',
+                'message' => 'Appointment not found.'
+            ], 404);
+        }
+
+        $isPackageAppointment = $appointment->service && isPackageService($appointment->service);
+
+        $validationRules = [
+            'date' => 'required|date',
+            'notes' => 'nullable|string|max:1000',
+            'flows' => 'nullable|string',
+            'pictures.*' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
+        ];
+
+        if ($isPackageAppointment) {
+            $validationRules['pickup_time'] = 'required|string';
+        }
+
+        $request->validate($validationRules);
+
+        // Update or create checkout record
+        $checkout = Checkout::where('appointment_id', $appointment->id)->first();
+        if (!$checkout) {
+            $checkout = new Checkout;
+            $checkout->appointment_id = $appointment->id;
+        }
+
+        $checkout->date = $request->date;
+        $checkout->notes = $request->notes;
+
+        // For package appointments, save pickup time to appointment end_time
+        if ($isPackageAppointment && $request->filled('pickup_time')) {
+            $appointment->end_time = $request->pickup_time;
+            $appointment->save();
+        }
+
+        // Handle flows and pictures
+        $flowsData = $request->flows ? json_decode($request->flows, true) : [];
+
+        // Handle picture uploads
+        $pictureNames = [];
+        if ($request->hasFile('pictures')) {
+            foreach ($request->file('pictures') as $picture) {
+                $fileName = time() . '_' . uniqid() . '.' . $picture->getClientOriginalExtension();
+                $picture->storeAs('checkouts', $fileName, 'public');
+                $pictureNames[] = $fileName;
+            }
+        }
+
+        // Add pictures to flows
+        if (!empty($pictureNames)) {
+            $flowsData['pictures'] = $pictureNames;
+        }
+
+        // Update pet behavior selection when provided from checkout form
+        if ($appointment->pet_id && isset($flowsData['behavior_ids']) && is_array($flowsData['behavior_ids'])) {
+            $behaviorIds = collect($flowsData['behavior_ids'])
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn ($id) => $id > 0)
+                ->unique()
+                ->values()
+                ->toArray();
+
+            PetProfile::where('id', $appointment->pet_id)->update([
+                'pet_behavior_id' => $behaviorIds,
+            ]);
+        }
+
+        $checkout->flows = json_encode($flowsData);
+        $checkout->save();
+
+        $invoice = Invoice::where('appointment_id', $appointment->id)->first();
+        $isInvoicePaid = $invoice && $invoice->status === 'paid';
+
+        if (isGroupClassService($appointment->service) || isPackageService($appointment->service) || $isInvoicePaid) {
+            $appointment->status = 'finished';
+            $appointment->save();
+            appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label('finished') . ".");
+        }
+
+        if ($isPackageAppointment && $appointment->metadata && isset($appointment->metadata['package_id'])) {
+            $packageId = $appointment->metadata['package_id'];
+            CustomerPackage::where('customer_id', $appointment->customer_id)
+                ->where('package_id', $packageId)
+                ->where('remaining_days', 0)
+                ->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Checkout completed successfully.'
+        ]);
+    }
+
+    public function saveAlaCarteProcess(Request $request, $id)
+    {
+        $request->validate([
+            'secondary_service_id' => 'required|exists:services,id',
+            'staff_id' => 'required|exists:users,id',
+            'date' => 'required|date',
+            'start_time' => 'required|string',
+            'pickup_time' => 'required|string',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $appointment = Appointment::find($id);
+        if (!$appointment) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Appointment not found.'
+            ], 404);
+        }
+
+        $process = Process::where('appointment_id', $id)
+            ->where('date', $request->date)
+            ->where('detail_id', null)
+            ->first();
+
+        if (!$process) {
+            $process = new Process;
+            $process->appointment_id = $id;
+        }
+
+        $process->detail_id = $request->secondary_service_id;
+        $process->staff_id = $request->staff_id;
+        $process->date = $request->date;
+        $process->start_time = $request->start_time;
+        $process->pickup_time = $request->pickup_time;
+        $process->notes = $request->notes;
+
+        $process->save();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Process saved successfully.'
+        ]);
+    }
+
+    private function saveCancellationRecord(Appointment $appointment, string $status)
+    {
+        $existingRecord = AppointmentCancellation::where('appointment_id', $appointment->id)
+            ->where('type', $status === 'cancelled' ? 'cancel' : 'noshow')
+            ->first();
+
+        if (!$existingRecord) {
+            AppointmentCancellation::create([
+                'appointment_id' => $appointment->id,
+                'customer_id' => $appointment->customer_id,
+                'service_id' => $appointment->service_id,
+                'cancelled_by' => Auth::id(),
+                'type' => $status === 'cancelled' ? 'cancel' : 'noshow',
+                'occurred_at' => Carbon::now(),
+            ]);
+        }
+    }
+
+    private function releaseTimeSlots(Appointment $appointment)
+    {
+        if ($appointment->metadata && isset($appointment->metadata['used_slot_ids'])) {
+            $usedSlotIds = is_array($appointment->metadata['used_slot_ids'])
+                ? $appointment->metadata['used_slot_ids']
+                : explode(',', $appointment->metadata['used_slot_ids']);
+
+            $timeSlots = TimeSlot::whereIn('id', $usedSlotIds)->get();
+            foreach ($timeSlots as $timeSlot) {
+                $timeSlot->decrementBooking();
+            }
+        } else {
+            if ($appointment->date && $appointment->start_time && $appointment->service_id) {
+                $timeSlots = TimeSlot::where('service_id', $appointment->service_id)
+                    ->whereDate('date', $appointment->date)
+                    ->where(function ($query) use ($appointment) {
+                        $query->where('start_time', $appointment->start_time)
+                              ->orWhere('end_time', $appointment->end_time);
+                    })->get();
+
+                foreach ($timeSlots as $timeSlot) {
+                    $timeSlot->decrementBooking();
+                }
+            }
+        }
+    }
+
+    public function updateStatus(Request $request, $id)
+    {
+        $request->validate([
+            'status' => 'required|in:cancelled,no_show,checked_in',
+        ]);
+
+        $appointment = Appointment::findOrFail($id);
+        $newStatus = $request->status;
+
+        $appointment->status = $newStatus;
+        $appointment->save();
+        $label = $newStatus === 'checked_in' ? "Appointment is created." : "Appointment status changed to " . appointment_status_label($newStatus, $appointment->service) . ".";
+        appointment_audit_log($appointment->id, $label);
+
+        if (in_array($newStatus, ['cancelled', 'no_show'])) {
+            $this->saveCancellationRecord($appointment, $newStatus);
+            $this->releaseTimeSlots($appointment);
+        }
+
+        return redirect()->route('archives')->with([
+            'message' => "Appointment ${newStatus} successfully.",
+            'status' => 'success'
+        ]);
+    }
+}

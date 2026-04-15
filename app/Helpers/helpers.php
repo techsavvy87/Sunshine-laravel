@@ -1,0 +1,771 @@
+<?php
+
+if (!function_exists('getServicePrice')) {
+    function getServicePrice($service, $petSize, $metadata = null) {
+        $base = floatval($service->price ?? 0);
+        $priceSmall = isset($service->price_small) ? floatval($service->price_small) : null;
+        $priceMedium = isset($service->price_medium) ? floatval($service->price_medium) : null;
+        $priceLarge = isset($service->price_large) ? floatval($service->price_large) : null;
+        $priceXL = isset($service->price_xlarge) ? floatval($service->price_xlarge) : null;
+
+        $category = strtolower($service->category->name ?? '');
+
+        if (str_contains($category, 'groom')) {
+            switch ($petSize) {
+                case 'small':  return $priceSmall  ?? $base;
+                case 'medium': return $priceMedium ?? $base;
+                case 'large':  return $priceLarge  ?? $base;
+                case 'xlarge': return $priceXL      ?? $base;
+                default:       return $base;
+            }
+        }
+
+        if (str_contains($category, 'daycare')) {
+            if ($metadata && isset($metadata['daycare_duration'])) {
+                if ($metadata['daycare_duration'] === 'half_day' && $priceSmall !== null) {
+                    return $priceSmall;
+                }
+                if ($metadata['daycare_duration'] === 'full_day' && $priceMedium !== null) {
+                    return $priceMedium;
+                }
+            }
+            return $priceSmall;
+        }
+
+        if (str_contains($category, 'training')) {
+            // Check if this is a group class service (price_small is null)
+            if ($priceSmall === null) {
+                // This is a group class service
+                // For group classes, price should be calculated from selected group classes in metadata
+                if ($metadata && isset($metadata['group_class_ids'])) {
+                    $groupClassIds = explode(',', $metadata['group_class_ids']);
+                    $totalPrice = 0;
+                    foreach ($groupClassIds as $classId) {
+                        if (!empty($classId)) {
+                            $groupClass = \App\Models\GroupClass::find($classId);
+                            if ($groupClass) {
+                                $totalPrice += floatval($groupClass->price ?? 0);
+                            }
+                        }
+                    }
+                    return $totalPrice > 0 ? $totalPrice : $base;
+                }
+                return $base;
+            }
+
+            // This is private training (price_small is not null)
+            if ($metadata && isset($metadata['private_training_duration'])) {
+                if ($metadata['private_training_duration'] === 'half_hour' && $priceSmall !== null) {
+                    return $priceLarge ? $priceSmall + $priceLarge : $priceSmall;
+                }
+                if ($metadata['private_training_duration'] === 'one_hour' && $priceMedium !== null) {
+                    return $priceLarge ? $priceMedium + $priceLarge : $priceMedium;
+                }
+            }
+            return $priceLarge ? $priceSmall + $priceLarge : $priceMedium;
+        }
+
+        return $base;
+    }
+}
+
+if (!function_exists('isGroomingService')) {
+    function isGroomingService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'groom');
+    }
+}
+
+if (!function_exists('isDaycareService')) {
+    function isDaycareService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'daycare');
+    }
+}
+
+if (!function_exists('isPrivateTrainingService')) {
+    function isPrivateTrainingService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'training');
+    }
+}
+
+if (!function_exists('isGroupClassService')) {
+    function isGroupClassService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'group');
+    }
+}
+
+if (!function_exists('isAlaCarteService')) {
+    function isAlaCarteService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'carte');
+    }
+}
+
+if (!function_exists('isBoardingService')) {
+    function isBoardingService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'boarding');
+    }
+}
+
+if (!function_exists('isPackageService')) {
+    function isPackageService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'package');
+    }
+}
+
+if (!function_exists('getBoardingServicePrice')) {
+    function getBoardingServicePrice($service, $appointment)
+    {
+        if (!isBoardingService($service)) {
+            return null;
+        }
+
+        $price = floatval($service->price ?? 0);
+        $duration = floatval($service->duration ?? 1);
+
+        if ($price > 0 && $duration > 0) {
+            $pricePerHour = $price / $duration;
+
+            $startDateTime = null;
+            if ($appointment->date && $appointment->start_time) {
+                $startDateTime = \Carbon\Carbon::parse($appointment->date . ' ' . $appointment->start_time);
+            } elseif ($appointment->date) {
+                $startDateTime = \Carbon\Carbon::parse($appointment->date);
+            }
+
+            $endDateTime = null;
+            if ($appointment->end_date && $appointment->end_time) {
+                $endDateTime = \Carbon\Carbon::parse($appointment->end_date . ' ' . $appointment->end_time);
+            } elseif ($appointment->end_date) {
+                $endDateTime = \Carbon\Carbon::parse($appointment->end_date);
+            }
+
+            if ($startDateTime && $endDateTime && $endDateTime->gt($startDateTime)) {
+                $totalHours = $startDateTime->diffInHours($endDateTime);
+                return $pricePerHour * $totalHours;
+            } elseif ($startDateTime) {
+                return $pricePerHour * 24;
+            }
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('isChauffeurService')) {
+    function isChauffeurService($service)
+    {
+        if (!$service || !$service->category) return false;
+        return str_contains(strtolower($service->category->name), 'chauffeur');
+    }
+}
+
+if (!function_exists('serviceCaresAboutPetSize')) {
+    function serviceCaresAboutPetSize($service)
+    {
+        if (!$service) return false;
+
+        $hasPetSizePricing = !is_null($service->price_small) ||
+                             !is_null($service->price_medium) ||
+                             !is_null($service->price_large) ||
+                             !is_null($service->price_xlarge);
+
+        $hasPetSizeDuration = !is_null($service->duration_small) ||
+                              !is_null($service->duration_medium) ||
+                              !is_null($service->duration_large) ||
+                              !is_null($service->duration_xlarge);
+
+        return $hasPetSizePricing || $hasPetSizeDuration;
+    }
+}
+
+if (!function_exists('getScopedDiscountsForCustomerAndService')) {
+    function getScopedDiscountsForCustomerAndService($customerId, $serviceId)
+    {
+        $customerId = intval($customerId);
+        $serviceId = intval($serviceId);
+
+        return \App\Models\Discount::query()
+            ->get()
+            ->filter(function ($discount) use ($customerId, $serviceId) {
+                $serviceIds = is_array($discount->service_ids) ? array_map('intval', $discount->service_ids) : [];
+                $customerIds = is_array($discount->customer_ids) ? array_map('intval', $discount->customer_ids) : [];
+
+                $serviceMatch = empty($serviceIds) || in_array($serviceId, $serviceIds, true);
+                $customerMatch = empty($customerIds) || in_array($customerId, $customerIds, true);
+
+                return $serviceMatch && $customerMatch;
+            })
+            ->values();
+    }
+}
+
+if (!function_exists('calculateBestDiscountForEstimatedPrice')) {
+    function calculateBestDiscountForEstimatedPrice($estimatedPrice, $discounts, $referenceDate): array
+    {
+        $estimatedPrice = max(0, floatval($estimatedPrice ?? 0));
+        $reference = $referenceDate ? \Carbon\Carbon::parse($referenceDate) : \Carbon\Carbon::now();
+
+        $bestDiscount = null;
+        $bestDiscountAmount = 0.0;
+
+        foreach ($discounts as $discount) {
+            $startDate = $discount->start_date ? \Carbon\Carbon::parse($discount->start_date) : null;
+            $endDate = $discount->end_date ? \Carbon\Carbon::parse($discount->end_date) : null;
+
+            if ($startDate && $reference->lt($startDate)) {
+                continue;
+            }
+
+            if ($endDate && $reference->gt($endDate)) {
+                continue;
+            }
+
+            $rawAmount = floatval($discount->amount ?? 0);
+            $candidateAmount = $discount->type === 'percent'
+                ? ($estimatedPrice * $rawAmount / 100)
+                : $rawAmount;
+
+            $candidateAmount = max(0, min($estimatedPrice, round($candidateAmount, 2)));
+
+            if ($candidateAmount > $bestDiscountAmount) {
+                $bestDiscountAmount = $candidateAmount;
+                $bestDiscount = $discount;
+            }
+        }
+
+        return [
+            'discount_title' => $bestDiscount?->title,
+            'discount_amount' => round($bestDiscountAmount, 2),
+        ];
+    }
+}
+
+if (!function_exists('buildDiscountPreview')) {
+    function buildDiscountPreview($totalPrice, $ownerId, $serviceId): array
+    {
+        $discounts = getScopedDiscountsForCustomerAndService($ownerId, $serviceId);
+        $discountResult = calculateBestDiscountForEstimatedPrice($totalPrice, $discounts, \Carbon\Carbon::now());
+
+        return [
+            'discount_title' => $discountResult['discount_title'] ?? null,
+            'discount_amount' => floatval($discountResult['discount_amount'] ?? 0),
+        ];
+    }
+}
+
+if (!function_exists('handleGroupClasses')) {
+    function handleGroupClasses($classIds, $customerId, $petId, $serviceId, $staffId = null)
+    {
+        foreach ($classIds as $classId) {
+            $groupClass = \App\Models\GroupClass::find($classId);
+            if (!$groupClass) continue;
+
+            // Parse duration
+            $durationAmount = intval($groupClass->duration_amount ?? 0);
+            $durationUnit = strtolower($groupClass->duration_unit ?? 'weeks');
+
+            if ($durationAmount <= 0) continue;
+
+            // Calculate end date based on duration
+            $startDate = \Carbon\Carbon::parse($groupClass->started_at);
+            $endDate = clone $startDate;
+
+            switch ($durationUnit) {
+                case 'days':
+                    $endDate->addDays($durationAmount);
+                    break;
+                case 'weeks':
+                    $endDate->addWeeks($durationAmount);
+                    break;
+                case 'months':
+                    $endDate->addMonths($durationAmount);
+                    break;
+                default:
+                    $endDate->addWeeks($durationAmount);
+            }
+
+            // Parse schedules (e.g., "Monday 16:00,Thursday 17:00" or "Everyday 17:00")
+            $schedules = array_filter(array_map('trim', explode(',', $groupClass->schedule ?? '')));
+
+            if (empty($schedules)) continue;
+
+            // Map day names to Carbon day numbers (0=Sunday, 1=Monday, ..., 6=Saturday)
+            $dayMap = [
+                'sunday' => \Carbon\Carbon::SUNDAY,
+                'monday' => \Carbon\Carbon::MONDAY,
+                'tuesday' => \Carbon\Carbon::TUESDAY,
+                'wednesday' => \Carbon\Carbon::WEDNESDAY,
+                'thursday' => \Carbon\Carbon::THURSDAY,
+                'friday' => \Carbon\Carbon::FRIDAY,
+                'saturday' => \Carbon\Carbon::SATURDAY,
+            ];
+
+            foreach ($schedules as $schedule) {
+                // Parse schedule: "Monday 16:00" or "Everyday 17:00"
+                $parts = preg_split('/\s+/', trim($schedule), 2);
+                if (count($parts) < 2) continue;
+
+                $dayPart = strtolower($parts[0]);
+                $timePart = $parts[1]; // HH:MM
+
+                // Handle "Everyday" case
+                if ($dayPart === 'everyday') {
+                    // Create appointments for every day in the duration
+                    $currentDate = clone $startDate;
+                    while ($currentDate->lt($endDate)) {
+                        createGroupClassAppointment($groupClass, $currentDate, $timePart, $customerId, $petId, $serviceId, $staffId);
+                        $currentDate->addDay();
+                    }
+                } else {
+                    // Handle specific day of week
+                    if (!isset($dayMap[$dayPart])) continue;
+
+                    $targetDayOfWeek = $dayMap[$dayPart];
+
+                    // Find first occurrence of this weekday on or after start date
+                    $currentDate = clone $startDate;
+                    if ($currentDate->dayOfWeek !== $targetDayOfWeek) {
+                        $currentDate->next($targetDayOfWeek);
+                    }
+
+                    // Create appointments for this weekday until end date
+                    while ($currentDate->lt($endDate)) {
+                        createGroupClassAppointment($groupClass, $currentDate, $timePart, $customerId, $petId, $serviceId, $staffId);
+                        $currentDate->addWeek(); // Move to next occurrence of same weekday
+                    }
+                }
+            }
+        }
+    }
+}
+
+if (!function_exists('createGroupClassAppointment')) {
+    function createGroupClassAppointment($groupClass, $date, $time, $customerId, $petId, $serviceId, $staffId = null)
+    {
+        // Parse time (HH:MM)
+        $timeParts = explode(':', $time);
+        if (count($timeParts) < 2) return;
+
+        $hour = intval($timeParts[0]);
+        $minute = intval($timeParts[1]);
+
+        // Set the exact date and time
+        $appointmentDateTime = clone $date;
+        $appointmentDateTime->setTime($hour, $minute, 0);
+
+        // Don't create appointments in the past
+        if ($appointmentDateTime->lt(\Carbon\Carbon::now())) return;
+
+        $appointment = new \App\Models\Appointment;
+        $appointment->customer_id = $customerId;
+        $appointment->pet_id = $petId;
+        $appointment->service_id = $serviceId;
+        $appointment->additional_service_ids = null;
+        $appointment->staff_id = $staffId;
+        $appointment->date = $appointmentDateTime->toDateString();
+        $appointment->start_time = $appointmentDateTime->format('H:i:s');
+        $appointment->status = 'checked_in';
+        $appointment->estimated_price = floatval($groupClass->price ?? 0);
+        $appointment->metadata = ['group_class_ids' => (string)$groupClass->id];
+
+        $service = \App\Models\Service::find($serviceId);
+        $durationHours = floatval($service->duration ?? 1);
+        $endTime = clone $appointmentDateTime;
+        $endTime->addHours($durationHours);
+        $appointment->end_time = $endTime->format('H:i:s');
+
+        $appointment->save();
+        if (function_exists('appointment_audit_log')) {
+            appointment_audit_log($appointment->id, "Appointment is created.");
+        }
+    }
+}
+
+if (!function_exists('hasPermission')) {
+    /**
+     * Check if the authenticated user has a specific permission with a specific can_value
+     *
+     * @param int $permissionId The permission ID
+     * @param string $canValue The permission value to check (can_read, can_create, can_update, can_delete)
+     * @return bool
+     */
+    function hasPermission($permissionId, $canValue)
+    {
+        if (!auth()->check()) {
+            return false;
+        }
+
+        return auth()->user()->roles()
+            ->join('roles_permissions', 'roles.id', '=', 'roles_permissions.role_id')
+            ->where('roles_permissions.permission_id', $permissionId)
+            ->where('roles_permissions.' . $canValue, 1)
+            ->exists();
+    }
+}
+
+if (!function_exists('getServicePermissionId')) {
+    function getServicePermissionId($service)
+    {
+        if (!$service || !$service->category) {
+            return null;
+        }
+
+        $categoryName = strtolower($service->category->name);
+
+        if (str_contains($categoryName, 'boarding')) {
+            return 16;
+        } elseif (str_contains($categoryName, 'daycare')) {
+            return 17;
+        } elseif (str_contains($categoryName, 'groom')) {
+            return 18;
+        } elseif (str_contains($categoryName, 'training')) {
+            return 19;
+        } elseif (str_contains($categoryName, 'group')) {
+            return 20;
+        } elseif (str_contains($categoryName, 'carte')) {
+            return 21;
+        } elseif (str_contains($categoryName, 'package')) {
+            return 22;
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('appointment_status_label')) {
+    function appointment_status_label(?string $status, $service = null): string
+    {
+        $labels = [
+            'checked_in' => 'Scheduled',
+            'in_progress' => ($service && (isBoardingService($service) || isDaycareService($service))) ? 'On Property' : 'In Progress',
+            'completed' => 'Completed',
+            'finished' => 'Finished',
+            'cancelled' => 'Cancelled',
+            'canceled' => 'Cancelled',
+            'no_show' => 'No Show',
+            'confirmed' => 'Confirmed',
+        ];
+
+        if ($status && isset($labels[$status])) {
+            return $labels[$status];
+        }
+
+        return $status ? ucfirst(str_replace('_', ' ', $status)) : '—';
+    }
+}
+
+if (!function_exists('appointment_audit_log')) {
+    function appointment_audit_log($appointmentId, $description)
+    {
+        $auth = \Illuminate\Support\Facades\Auth::getFacadeRoot();
+        $employeeName = null;
+        if ($auth->check()) {
+            $user = $auth->user()->load('profile');
+            $fullName = $user->profile
+                ? trim(($user->profile->first_name ?? '') . ' ' . ($user->profile->last_name ?? ''))
+                : '';
+            $employeeName = $fullName ?: $user->name ?? $user->email;
+        }
+
+        $petName = null;
+        $petAvatar = null;
+        $ownerName = null;
+        $type = null;
+
+        $appointment = \App\Models\Appointment::with(['pet', 'customer.profile', 'service.category'])
+            ->find($appointmentId);
+
+        if ($appointment) {
+            if ($appointment->pet) {
+                $petName = $appointment->pet->name;
+                $petAvatar = $appointment->pet->pet_img;
+            }
+            if ($appointment->customer) {
+                if ($appointment->customer->profile) {
+                    $ownerName = trim(($appointment->customer->profile->first_name ?? '') . ' ' . ($appointment->customer->profile->last_name ?? ''));
+                }
+                if (empty($ownerName)) {
+                    $ownerName = $appointment->customer->email;
+                }
+            }
+            if ($appointment->service) {
+                $type = $appointment->service->category
+                    ? $appointment->service->category->name
+                    : $appointment->service->name;
+            }
+        }
+
+        \App\Models\AppointmentAuditLog::create([
+            'description' => $description,
+            'pet_name' => $petName,
+            'pet_avatar' => $petAvatar,
+            'owner_name' => $ownerName,
+            'type' => $type,
+            'employee' => $employeeName,
+        ]);
+    }
+}
+
+if (!function_exists('buildOwnerAddressFromProfile')) {
+    function buildOwnerAddressFromProfile($profile): ?string
+    {
+        if (!$profile) {
+            return null;
+        }
+
+        $address = trim((string)($profile->address ?? ''));
+        $city = trim((string)($profile->city ?? ''));
+        $state = trim((string)($profile->state ?? ''));
+        $zip = trim((string)($profile->zip_code ?? ''));
+
+        // Chauffeur validation requires a complete address (address, city, state, zip).
+        if ($address === '' || $city === '' || $state === '' || $zip === '') {
+            return null;
+        }
+
+        return implode(', ', [$address, $city, $state, $zip]);
+    }
+}
+
+if (!function_exists('buildFacilityAddressFromModel')) {
+    function buildFacilityAddressFromModel($facility): ?string
+    {
+        if (!$facility) {
+            return null;
+        }
+
+        $address = trim((string)($facility->address ?? ''));
+        $city = trim((string)($facility->city ?? ''));
+        $state = trim((string)($facility->state ?? ''));
+        $zip = trim((string)($facility->zip_code ?? ''));
+
+        if ($address === '' || $city === '' || $state === '' || $zip === '') {
+            return null;
+        }
+
+        return implode(', ', [$address, $city, $state, $zip]);
+    }
+}
+
+if (!function_exists('geocodeChauffeurAddress')) {
+    function geocodeChauffeurAddress(string $address): ?array
+    {
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(12)
+                ->withHeaders([
+                    'User-Agent' => 'PawPrints/1.0 (admin@pawprints.local)',
+                    'Accept' => 'application/json',
+                ])
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'format' => 'jsonv2',
+                    'limit' => 1,
+                    'q' => $address,
+                ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+
+            if (!is_array($data) || empty($data[0]['lat']) || empty($data[0]['lon'])) {
+                return null;
+            }
+
+            return [
+                'lat' => floatval($data[0]['lat']),
+                'lon' => floatval($data[0]['lon']),
+            ];
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+}
+
+if (!function_exists('getDrivingDistanceMiles')) {
+    function getDrivingDistanceMiles(array $origin, array $destination): ?float
+    {
+        try {
+            $coordinates = sprintf(
+                '%s,%s;%s,%s',
+                $origin['lon'],
+                $origin['lat'],
+                $destination['lon'],
+                $destination['lat']
+            );
+
+            $response = \Illuminate\Support\Facades\Http::timeout(12)
+                ->acceptJson()
+                ->get("https://router.project-osrm.org/route/v1/driving/{$coordinates}", [
+                    'overview' => 'false',
+                ]);
+
+            if (!$response->successful()) {
+                return null;
+            }
+
+            $data = $response->json();
+
+            if (!is_array($data) || ($data['code'] ?? null) !== 'Ok' || empty($data['routes'][0]['distance'])) {
+                return null;
+            }
+
+            $distanceMeters = floatval($data['routes'][0]['distance']);
+
+            return round($distanceMeters / 1609.344, 2);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+}
+
+if (!function_exists('calculateChauffeurServicePrice')) {
+    function calculateChauffeurServicePrice($chauffeurService, $customerId): float
+    {
+        $facility = \App\Models\FacilityAddress::query()->first();
+        $facilityAddress = buildFacilityAddressFromModel($facility);
+
+        if (!$facilityAddress) {
+            return 0;
+        }
+
+        $customer = \App\Models\User::find($customerId);
+        $ownerAddress = buildOwnerAddressFromProfile($customer?->profile);
+
+        if (!$ownerAddress) {
+            return 0;
+        }
+
+        $ownerCoords = geocodeChauffeurAddress($ownerAddress);
+        $facilityCoords = geocodeChauffeurAddress($facilityAddress);
+
+        if (!$ownerCoords || !$facilityCoords) {
+            return 0;
+        }
+
+        $distanceMiles = getDrivingDistanceMiles($ownerCoords, $facilityCoords);
+
+        if ($distanceMiles === null) {
+            return 0;
+        }
+
+        $pricePerMile = floatval($chauffeurService->price_per_mile ?? 0);
+
+        return round($distanceMiles * $pricePerMile, 2);
+    }
+}
+
+if (!function_exists('buildChauffeurPricingData')) {
+    function buildChauffeurPricingData($appointment): array
+    {
+        $facility = \App\Models\FacilityAddress::query()->first();
+        $facilityAddress = buildFacilityAddressFromModel($facility);
+
+        $result = [
+            'has_chauffeur' => false,
+            'is_route_valid' => false,
+            'error' => null,
+            'distance_miles' => null,
+            'owner_address' => null,
+            'facility_address' => $facilityAddress,
+            'service_prices' => [],
+        ];
+
+        // Resolve all chauffeur services from the appointment
+        $serviceIds = collect();
+
+        if ($appointment->service && isChauffeurService($appointment->service)) {
+            $serviceIds->push(intval($appointment->service->id));
+        }
+
+        if (!empty($appointment->additional_service_ids)) {
+            $raw = $appointment->additional_service_ids;
+            $parsed = is_array($raw)
+                ? array_values(array_filter($raw, fn ($id) => !empty($id)))
+                : array_values(array_filter(array_map('trim', explode(',', (string)$raw)), fn ($id) => $id !== ''));
+            $serviceIds = $serviceIds->merge($parsed);
+        }
+
+        if (isAlaCarteService($appointment->service) && $appointment->metadata && isset($appointment->metadata['secondary_service_ids'])) {
+            $raw = $appointment->metadata['secondary_service_ids'];
+            $parsed = is_array($raw)
+                ? array_values(array_filter($raw, fn ($id) => !empty($id)))
+                : array_values(array_filter(array_map('trim', explode(',', (string)$raw)), fn ($id) => $id !== ''));
+            $serviceIds = $serviceIds->merge($parsed);
+        }
+
+        $uniqueIds = $serviceIds->filter()->map(fn ($id) => intval($id))->unique()->values();
+
+        if ($uniqueIds->isEmpty()) {
+            return $result;
+        }
+
+        $chauffeurServices = \App\Models\Service::with('category')
+            ->whereIn('id', $uniqueIds)
+            ->get()
+            ->filter(fn ($s) => isChauffeurService($s))
+            ->values();
+
+        if ($chauffeurServices->isEmpty()) {
+            return $result;
+        }
+
+        $result['has_chauffeur'] = true;
+
+        $ownerAddress = buildOwnerAddressFromProfile($appointment->customer?->profile);
+        $result['owner_address'] = $ownerAddress;
+
+        if (!$ownerAddress) {
+            $result['error'] = 'Owner address is invalid.';
+            return $result;
+        }
+
+        if (!$facilityAddress) {
+            $result['error'] = 'Facility address is invalid.';
+            return $result;
+        }
+
+        $ownerCoords = geocodeChauffeurAddress($ownerAddress);
+        $facilityCoords = geocodeChauffeurAddress($facilityAddress);
+
+        if (!$ownerCoords) {
+            $result['error'] = 'Owner address is invalid.';
+            return $result;
+        }
+
+        if (!$facilityCoords) {
+            $result['error'] = 'Facility address is invalid.';
+            return $result;
+        }
+
+        $distanceMiles = getDrivingDistanceMiles($ownerCoords, $facilityCoords);
+
+        if ($distanceMiles === null) {
+            $result['error'] = 'Invalid address or route. OSRM could not return a valid chauffeur route.';
+            return $result;
+        }
+
+        $result['is_route_valid'] = true;
+        $result['distance_miles'] = $distanceMiles;
+
+        foreach ($chauffeurServices as $chauffeurService) {
+            $pricePerMile = floatval($chauffeurService->price_per_mile ?? 0);
+            $result['service_prices'][$chauffeurService->id] = round($distanceMiles * $pricePerMile, 2);
+        }
+
+        return $result;
+    }
+}

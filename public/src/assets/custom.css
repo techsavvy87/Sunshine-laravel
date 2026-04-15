@@ -1,0 +1,194 @@
+.button-sm {
+    height: 2.2rem;
+    padding: 0 0.75rem;
+}
+
+:root {
+    --select2-bg: #ffffff;
+    --select2-border: #d1d5db;
+    --select2-text: #1f2937;
+    --select2-placeholder: #6b7280;
+    --select2-hover-bg: #f3f4f6;
+    --select2-focus-border: #3b82f6;
+    --select2-dropdown-bg: #ffffff;
+    --select2-option-hover: #e5e7eb;
+}
+
+[data-theme="dark"] {
+    --select2-bg: #181c20;
+    --select2-border: #4b5563;
+    --select2-text: #f9fafb;
+    --select2-placeholder: #9ca3af;
+    --select2-hover-bg: #4b5563;
+    --select2-focus-border: #60a5fa;
+    --select2-dropdown-bg: #2f353f;
+    --select2-option-hover: #4b5563;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+        --select2-bg: #374151;
+        --select2-border: #4b5563;
+        --select2-text: #f9fafb;
+        --select2-placeholder: #9ca3af;
+        --select2-hover-bg: #4b5563;
+        --select2-focus-border: #60a5fa;
+        --select2-dropdown-bg: #374151;
+        --select2-option-hover: #4b5563;
+    }
+}
+
+.select2-container {
+    width: 100% !important;
+}
+
+/* .select2-dropdown {
+    width: 100% !important;
+    min-width: 100% !important;
+    box-sizing: border-box;
+} */
+
+.select2-container .select2-selection--single {
+    height: 40px;
+    border-color: var(--select2-border);
+    background-color: var(--select2-bg);
+    color: var(--select2-text);
+    transition: all 0.2s ease;
+}
+
+.select2-container .select2-selection--multiple {
+    border-color: var(--select2-border);
+    background-color: var(--select2-bg);
+    transition: all 0.2s ease;
+}
+
+.select2-container--default
+    .select2-selection--single
+    .select2-selection__rendered {
+    line-height: 38px;
+    font-size: 14px;
+    padding-left: 12px;
+    color: var(--select2-text);
+}
+
+.select2-container--default
+    .select2-selection--single
+    .select2-selection__arrow {
+    height: 38px;
+}
+
+.select2-container--default
+    .select2-selection--single
+    .select2-selection__placeholder {
+    font-size: 14px;
+    color: var(--select2-placeholder);
+}
+
+.select2-container--default.select2-container--focus .select2-selection--single,
+.select2-container--default.select2-container--focus
+    .select2-selection--multiple {
+    border-color: var(--select2-focus-border);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.select2-dropdown {
+    background-color: var(--select2-dropdown-bg);
+    border-color: var(--select2-border);
+    color: var(--select2-text);
+}
+
+.select2-results__option {
+    font-size: 13px !important;
+    color: var(--select2-text);
+    background-color: var(--select2-dropdown-bg);
+}
+
+.select2-results__option--highlighted {
+    background-color: var(--select2-option-hover) !important;
+    color: var(--select2-text) !important;
+}
+
+.select2-search__field {
+    font-size: 14px !important;
+    background-color: var(--select2-bg) !important;
+    color: var(--select2-text) !important;
+    border-color: var(--select2-border) !important;
+}
+
+.select2-search__field::placeholder {
+    color: var(--select2-placeholder) !important;
+}
+
+/* Multiple selection styling */
+.select2-selection__choice {
+    background-color: var(--select2-focus-border) !important;
+    color: white !important;
+    border: none !important;
+}
+
+.select2-selection__choice__remove {
+    color: white !important;
+}
+
+.select2-selection__choice__remove:hover {
+    color: #fca5a5 !important;
+}
+
+.search-container {
+    min-width: 260px;
+}
+
+span.dots {
+    height: 6px;
+    width: 6px;
+    font-size: 0;
+    text-align: center;
+    padding: 0;
+    position: absolute;
+    top: 7px;
+    right: 9px;
+    animation: shadow-pulse-dots 1s infinite;
+    border-radius: 50%;
+    -webkit-border-radius: 50%;
+}
+
+.video-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.help-video {
+    max-width: 80%;
+    height: auto;
+    margin-top: 2rem;
+}
+
+@keyframes shadow-pulse-dots {
+    0% {
+        box-shadow: 0 0 0 0px rgba(230, 65, 65, 0.2);
+    }
+    100% {
+        box-shadow: 0 0 0 15px rgba(230, 65, 65, 0);
+    }
+}
+@keyframes shadow-pulse {
+    0% {
+        box-shadow: 0 0 0 0px rgba(0, 132, 255, 0.2);
+    }
+    100% {
+        box-shadow: 0 0 0 15px rgba(0, 132, 255, 0);
+    }
+}
+
+@media (max-width: 640px) {
+    .search-container {
+        min-width: 220px;
+    }
+
+    .help-video {
+        max-width: 100%;
+        margin-top: 1rem;
+    }
+}
