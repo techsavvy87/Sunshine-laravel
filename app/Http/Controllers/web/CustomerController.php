@@ -112,6 +112,8 @@ class CustomerController extends Controller
             $user->email_verified_at = Carbon::now();
         }
         $user->status = $request->boolean('status') ?? false;
+        $user->block_reservations = $request->boolean('block_reservations') ?? false;
+        $user->block_messages = $request->boolean('block_messages') ?? false;
         $user->save();
 
         // Create profile
@@ -126,6 +128,9 @@ class CustomerController extends Controller
         $profile->city = $request->city;
         $profile->state = $request->state;
         $profile->zip_code = $request->zip_code;
+        $profile->emergency_contact_info = $request->emergency_contact_info;
+        $profile->home_number = $request->home_number;
+        $profile->work_number = $request->work_number;
 
         if ($request->filled('temp_file')) {
             $tempFile = $request->temp_file;
@@ -232,6 +237,8 @@ class CustomerController extends Controller
             $user->email_verified_at = null;
         }
         $user->status = $request->boolean('status') ?? false;
+        $user->block_reservations = $request->boolean('block_reservations') ?? false;
+        $user->block_messages = $request->boolean('block_messages') ?? false;
 
         $user->save();
 
@@ -251,6 +258,9 @@ class CustomerController extends Controller
         $profile->city = $request->city;
         $profile->state = $request->state;
         $profile->zip_code = $request->zip_code;
+        $profile->emergency_contact_info = $request->emergency_contact_info;
+        $profile->home_number = $request->home_number;
+        $profile->work_number = $request->work_number;
 
         // Handle avatar based on action
         switch ($request->avatar_action) {
@@ -341,10 +351,10 @@ class CustomerController extends Controller
     public function deleteCustomer(Request $request)
     {
         $request->validate([
-            'user_id' => 'required|exists:users,id'
+            'customer_id' => 'required|exists:users,id'
         ]);
 
-        $user = User::findOrFail($request->user_id);
+        $user = User::findOrFail($request->customer_id);
 
         // Delete user's avatar if exists
         if ($user->profile && $user->profile->avatar_img) {

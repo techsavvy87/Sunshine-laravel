@@ -42,6 +42,7 @@
               <th>Email</th>
               <th>Phone 1</th>
               <th style="text-align: center;">Verified</th>
+              <th>Block</th>
               <th>Pets</th>
               <th>Action</th>
             </tr>
@@ -72,6 +73,17 @@
                 @else
                 <span class="iconify lucide--badge-x text-error size-4.5"></span>
                 @endif
+              </td>
+              <td style="max-width: 180px;">
+                <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                  @if ($customer->block_reservations)
+                    <div class="badge badge-soft badge-warning badge-sm">Reservations</div>
+                  @endif
+
+                  @if ($customer->block_messages)
+                    <div class="badge badge-soft badge-secondary badge-sm">Messages</div>
+                  @endif
+                </div>
               </td>
               <td style="max-width: 180px;">
                 <div style="display: flex; flex-wrap: wrap; gap: 4px;">
@@ -122,7 +134,7 @@
       </form>
       <form id="delete_form" method="POST" action="{{ route('delete-customer') }}">
         @csrf
-        <input type="hidden" name="user_id" value="" />
+        <input type="hidden" name="customer_id" value="" />
         <button class="btn btn-error">Delete</button>
       </form>
     </div>

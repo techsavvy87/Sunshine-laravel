@@ -213,7 +213,7 @@
 
       <div class="footer">
         Best regards,<br>
-        <strong>PawPrints Team</strong>
+        <strong>Sunshine Spot Team</strong>
       </div>
     </div>
   </body>

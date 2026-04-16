@@ -113,6 +113,9 @@ class UserController extends Controller
             $user->email_verified_at = Carbon::now();
         }
         $user->status = $request->boolean('is_active') ?? false;
+        $user->block_reservations = $request->boolean('block_reservations') ?? false;
+        $user->block_messages = $request->boolean('block_messages') ?? false;
+
         $user->save();
 
         // Create profile
@@ -127,6 +130,9 @@ class UserController extends Controller
         $profile->city = $request->city;
         $profile->state = $request->state;
         $profile->zip_code = $request->zip_code;
+        $profile->emergency_contact_info = $request->emergency_contact_info;
+        $profile->home_number = $request->home_number;
+        $profile->work_number = $request->work_number;
 
         if ($request->filled('temp_file')) {
             $tempFile = $request->temp_file;
@@ -199,6 +205,8 @@ class UserController extends Controller
             $user->email_verified_at = null;
         }
         $user->status = $request->boolean('is_active') ?? false;
+        $user->block_reservations = $request->boolean('block_reservations') ?? false;
+        $user->block_messages = $request->boolean('block_messages') ?? false;
 
         $user->save();
 

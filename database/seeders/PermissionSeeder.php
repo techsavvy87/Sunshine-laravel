@@ -40,5 +40,7 @@ class PermissionSeeder extends Seeder
         DB::table('permissions')->insert(['title' => 'Discounts', 'created_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
         DB::table('permissions')->insert(['title' => 'Pet Behaviors', 'created_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
         DB::table('permissions')->insert(['title' => 'Facility Address', 'created_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+        DB::table('permissions')->insert(['title' => 'Kennels', 'created_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
+        DB::table('permissions')->insert(['title' => 'Rooms', 'created_at' => Carbon::now(), 'updated_at' => Carbon::now()]);
     }
 }

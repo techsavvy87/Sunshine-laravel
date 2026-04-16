@@ -100,12 +100,12 @@
   </head>
   <body>
     <div class="email-container">
-      <h2>Pawprints</h2>
+      <h2>Sunshine Spot</h2>
       <p>Dear {{ $messageData['customer_name'] ?? 'Customer' }},</p>
       <p>{{ $messageData['message'] ?? '' }}</p>
       <div class="footer">
         Best regards,<br>
-        <strong>{{ $messageData['sender_name'] ?? 'Pawprints Team' }}</strong>
+        <strong>{{ $messageData['sender_name'] ?? 'Sunshine Spot Team' }}</strong>
       </div>
     </div>
   </body>

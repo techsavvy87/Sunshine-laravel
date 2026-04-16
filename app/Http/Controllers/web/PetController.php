@@ -197,6 +197,7 @@ class PetController extends Controller
         $request->validate([
             'pet_name' => 'required|string',
             'sex' => 'required|in:male,female',
+            'type' => 'required|in:Dog,Cat',
             'breed' => 'required|string',
             'size' => 'required|exists:weight_ranges,id',
             'weight' => 'required|numeric|min:0',
@@ -216,6 +217,7 @@ class PetController extends Controller
         $pet->user_id = $request->owner;
         $pet->name = $request->pet_name;
         $pet->sex = $request->sex;
+        $pet->type = $request->type;
         if ($request->filled('birth_date'))
             $pet->birthdate = Carbon::parse($request->birth_date);
         if ($request->filled('age'))
@@ -343,6 +345,7 @@ class PetController extends Controller
             'pet_profile_id' => 'required|exists:pet_profiles,id',
             'pet_name' => 'required|string',
             'sex' => 'required|in:male,female',
+            'type' => 'required|in:Dog,Cat',
             'breed' => 'required|string',
             'size' => 'required|exists:weight_ranges,id',
             'weight' => 'required|numeric|min:0',
@@ -366,6 +369,7 @@ class PetController extends Controller
         $pet->user_id = $request->owner;
         $pet->name = $request->pet_name;
         $pet->sex = $request->sex;
+        $pet->type = $request->type;
         if ($request->filled('birth_date'))
             $pet->birthdate = Carbon::parse($request->birth_date);
         else

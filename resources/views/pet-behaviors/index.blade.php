@@ -57,7 +57,7 @@
     <div class="xl:col-span-2 2xl:col-span-3">
       <div class="card bg-base-100 card-border">
         <div class="card-body">
-          <div class="card-title" id="behavior_icon_form_title">@if (hasPermission(31, 'can_create')) Add Pet Behavior @else View Pet Behavior @endif</div>
+          <div class="card-title" id="behavior_icon_form_title">@if (hasPermission(25, 'can_create')) Add Pet Behavior @else View Pet Behavior @endif</div>
           <input type="hidden" id="behavior_icon_id" value="">
           <div class="fieldset">
             <div class="space-y-1 mt-2">
@@ -92,7 +92,7 @@
             </div>
           </div>
           <div class="mt-5 flex justify-end gap-3">
-            @if (hasPermission(31, 'can_create') || hasPermission(31, 'can_update'))
+            @if (hasPermission(25, 'can_create') || hasPermission(25, 'can_update'))
             <button class="btn btn-ghost btn-sm" id="cancel_btn" onclick="cancelBehavior()">Cancel</button>
             <button class="btn btn-sm btn-primary gap-1" onclick="saveBehavior()" id="save_btn">
               <span class="loading loading-spinner size-3.5" style="display:none;"></span>
@@ -132,12 +132,12 @@
                   <td>{{ $behavior->description }}</td>
                   <td>
                     <div class="inline-flex w-fit">
-                      @if (hasPermission(31, 'can_update'))
+                      @if (hasPermission(25, 'can_update'))
                       <button class="btn btn-square btn-primary btn-outline btn-xs border-transparent" onclick="editBehavior({{ $behavior }})">
                         <span class="iconify lucide--pencil" style="font-size: 0.875rem;"></span>
                       </button>
                       @endif
-                      @if (hasPermission(31, 'can_delete'))
+                      @if (hasPermission(25, 'can_delete'))
                       <button class="btn btn-square btn-error btn-outline btn-xs border-transparent" onclick="openDeleteModal({{ $behavior->id }})">
                         <span class="iconify lucide--trash" style="font-size: 0.875rem;"></span>
                       </button>

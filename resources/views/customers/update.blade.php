@@ -80,6 +80,8 @@
                   </label>
                 </label>
               </div>
+            </div>
+            <div class="fieldset mt-5 flex flex-wrap items-center gap-5 xl:flex-nowrap">
               <div class="flex items-center gap-3">
                 <input class="toggle toggle-sm" id="email_verified" type="checkbox" name="email_verified" {{ $customer->email_verified_at ? 'checked' : '' }}/>
                 <label class="label" for="email_verified">Email Verified</label>
@@ -87,6 +89,14 @@
               <div class="flex items-center gap-3">
                 <input class="toggle toggle-sm" id="account_status" type="checkbox" name="status" {{ $customer->status ? 'checked' : '' }}/>
                 <label class="label" for="account_status">Account Active</label>
+              </div>
+              <div class="flex items-center gap-3">
+                <input class="toggle toggle-sm" id="block_reservations" type="checkbox" name="block_reservations" {{ $customer->block_reservations ? 'checked' : '' }}/>
+                <label class="label" for="block_reservations">Block Reservations</label>
+              </div>
+              <div class="flex items-center gap-3">
+                <input class="toggle toggle-sm" id="block_messages" type="checkbox" name="block_messages" {{ $customer->block_messages ? 'checked' : '' }}/>
+                <label class="label" for="block_messages">Block Messages</label>
               </div>
             </div>
           </div>
@@ -140,6 +150,14 @@
               <label class="fieldset-label">Phone Number2</label>
               <input class="input w-full" placeholder="(098) 765-4321" type="tel" name="phone_number_2" id="phone_number_2" value="{{ $customer->profile ? $customer->profile->phone_number_2 : '' }}" oninput="formatPhoneNumber(this)"/>
             </div>
+            <div class="space-y-2">
+              <label class="fieldset-label">Home Number</label>
+              <input class="input w-full" placeholder="(098) 765-4321" type="tel" name="home_number" id="home_number" value="{{ $customer->profile ? $customer->profile->home_number : '' }}" oninput="formatPhoneNumber(this)"/>
+            </div>
+            <div class="space-y-2">
+              <label class="fieldset-label">Work Number</label>
+              <input class="input w-full" placeholder="(098) 765-4321" type="tel" name="work_number" id="work_number" value="{{ $customer->profile ? $customer->profile->work_number : '' }}" oninput="formatPhoneNumber(this)"/>
+            </div>
             <div class="flex items-center gap-3">
               <input class="radio radio-sm" id="gender-male" type="radio" value="male" name="gender" {{ $customer->profile && $customer->profile->gender === 'male' ? 'checked' : '' }}/>
               <label class="fieldset-label" for="gender-male">Male</label>
@@ -191,6 +209,12 @@
               <label class="fieldset-label" for="zip_code">Zip Code</label>
               <input class="input w-full" id="zip_code" placeholder="564-879" type="text" name="zip_code" value="{{ $customer->profile ? $customer->profile->zip_code : '' }}"/>
             </div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-title">Emergency Contact Info</div>
+          <div class="fieldset mt-2">
+            <textarea class="textarea w-full" placeholder="Emergency Contact Info" name="emergency_contact_info" id="emergency_contact_info">{{ $customer->profile ? $customer->profile->emergency_contact_info : '' }}</textarea>
           </div>
         </div>
       </div>

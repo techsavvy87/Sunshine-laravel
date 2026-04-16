@@ -83,7 +83,7 @@
         <p>We look forward to seeing you and {{ $appointment->pet->name ?? 'your pet' }} tomorrow!</p>
 
         <p>Best regards,<br>
-        <strong>PawPrints Team</strong></p>
+        <strong>Sunshine Spot Team</strong></p>
     </div>
 
     <div class="footer">

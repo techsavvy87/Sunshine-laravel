@@ -48,7 +48,7 @@
                   Dashboard
                 </a>
                 @php
-                  $hasSystemSettingsPermission = hasPermission(6, 'can_read') || hasPermission(7, 'can_read') || hasPermission(10, 'can_read') || hasPermission(8, 'can_read') || hasPermission(9, 'can_read') || hasPermission(25, 'can_read') || hasPermission(26, 'can_read');
+                  $hasSystemSettingsPermission = hasPermission(6, 'can_read') || hasPermission(7, 'can_read') || hasPermission(8, 'can_read') || hasPermission(9, 'can_read') || hasPermission(25, 'can_read') || hasPermission(26, 'can_read') || hasPermission(27, 'can_read') || hasPermission(28, 'can_read');
                 @endphp
                 @if ($hasSystemSettingsPermission)
                 <div class="group collapse">
@@ -71,14 +71,17 @@
                     @if (hasPermission(7, 'can_read'))
                     <a class="sidebar-menu-item" href="{{ route('holidays') }}">Holidays</a>
                     @endif
-                    @if (hasPermission(10, 'can_read'))
-                    <a class="sidebar-menu-item" href="{{ route('credit-types') }}">Credit Types</a>
-                    @endif
                     @if (hasPermission(8, 'can_read'))
                     <a class="sidebar-menu-item" href="{{ route('weight-ranges') }}">Weight Ranges</a>
                     @endif
                     @if (hasPermission(9, 'can_read'))
                     <a class="sidebar-menu-item" href="{{ route('capacities') }}">Capacities</a>
+                    @endif
+                    @if (hasPermission(27, 'can_read'))
+                    <a class="sidebar-menu-item" href="{{ route('kennels') }}">Kennels</a>
+                    @endif
+                    @if (hasPermission(28, 'can_read'))
+                    <a class="sidebar-menu-item" href="{{ route('rooms') }}">Rooms</a>
                     @endif
                     @if (hasPermission(25, 'can_read'))
                     <a class="sidebar-menu-item" href="{{ route('pet-behaviors') }}">Pet Behaviors</a>
@@ -129,23 +132,6 @@
                   <span class="iconify lucide--brain-circuit size-4"></span>
                   Pets
                 </a>
-                @endif
-                @php
-                  $hasInventoryPermission = hasPermission(4, 'can_read');
-                @endphp
-                @if ($hasInventoryPermission)
-                <div class="group collapse">
-                  <input aria-label="Sidemenu item trigger" class="peer" type="checkbox" name="sidebar-menu-parent-item" />
-                  <div class="collapse-title">
-                    <span class="iconify lucide--package size-4"></span>
-                    <span class="grow">Inventory</span>
-                    <span class="iconify lucide--chevron-right arrow-icon size-3.5"></span>
-                  </div>
-                  <div class="collapse-content">
-                    <a class="sidebar-menu-item" href="{{ route('inventory-categories') }}">Categories</a>
-                    <a class="sidebar-menu-item" href="{{ route('inventory-items') }}">Items</a>
-                  </div>
-                </div>
                 @endif
                 @php
                   $hasServicePermission = hasPermission(11, 'can_read') || hasPermission(12, 'can_read') || hasPermission(13, 'can_read');
@@ -263,10 +249,10 @@
               </a>
               <div class="dropdown dropdown-center">
                 <div tabindex="0" role="button" class="btn btn-sm btn-circle btn-ghost" aria-label="Theme toggle">
-                <span class="iconify lucide--sun hidden size-4 size-4.5 group-data-[theme=light]/html:inline"></span>
-                <span class="iconify lucide--moon hidden size-4 size-4.5 group-data-[theme=dark]/html:inline"></span>
-                <span class="iconify lucide--monitor hidden size-4 size-4.5 group-[:not([data-theme])]/html:inline"></span>
-                <span class="iconify lucide--palette hidden size-4 size-4.5 group-data-[theme=contrast]/html:inline group-data-[theme=dim]/html:inline group-data-[theme=material]/html:inline group-data-[theme=material-dark]/html:inline"></span>
+                <span class="iconify lucide--sun hidden size-4.5 group-data-[theme=light]/html:inline"></span>
+                <span class="iconify lucide--moon hidden size-4.5 group-data-[theme=dark]/html:inline"></span>
+                <span class="iconify lucide--monitor hidden size-4.5 group-[:not([data-theme])]/html:inline"></span>
+                <span class="iconify lucide--palette hidden size-4.5 group-data-[theme=contrast]/html:inline group-data-[theme=dim]/html:inline group-data-[theme=material]/html:inline group-data-[theme=material-dark]/html:inline"></span>
               </div>
               <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-1 mt-2 w-36 space-y-0.5 p-1 shadow-sm">
                 <li>

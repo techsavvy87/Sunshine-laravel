@@ -85,12 +85,21 @@
                 <input class="grow focus:outline-0" placeholder="e.g. Fluffy" id="pet_name" name="pet_name" type="text" />
               </label>
             </div>
-            <div class="space-y-2">
-              <label class="fieldset-label" for="sex">Sex*</label>
-              <select class="select w-full" name="sex" id="sex">
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-              </select>
+            <div class="grid grid-cols-1 gap-2 xl:grid-cols-2">
+              <div class="space-y-2">
+                <label class="fieldset-label" for="sex">Sex*</label>
+                <select class="select w-full" name="sex" id="sex">
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              <div class="space-y-2">
+                <label class="fieldset-label" for="type">Type*</label>
+                <select class="select w-full" name="type" id="type">
+                  <option value="Dog">Dog</option>
+                  <option value="Cat">Cat</option>
+                </select>
+              </div>
             </div>
             <div class="space-y-2">
               <label class="fieldset-label" for="spay_neuter">Spay/Neuter</label>

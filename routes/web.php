@@ -29,6 +29,8 @@ use App\Http\Controllers\web\HelpController;
 use App\Http\Controllers\web\DiscountController;
 use App\Http\Controllers\web\PetBehaviorController;
 use App\Http\Controllers\web\FacilityAddressController;
+use App\Http\Controllers\web\KennelController;
+use App\Http\Controllers\web\RoomController;
 
 Route::controller(AuthController::class)->group(function () {
     Route::get('/login', 'login')->name('login');
@@ -347,9 +349,31 @@ Route::middleware(['auth'])->group(function () {
     });
 
     Route::controller(PetBehaviorController::class)->group(function () {
-        Route::get('/pet-behaviors', 'listBehaviors')->name('pet-behaviors')->middleware('ensure.permission:31,can_read');
-        Route::post('/pet-behavior/create', 'create')->name('create-behavior')->middleware('ensure.permission:31,can_create');
-        Route::post('/pet-behavior/update', 'update')->name('update-behavior')->middleware('ensure.permission:31,can_update');
-        Route::post('/pet-behavior/delete', 'delete')->name('delete-behavior')->middleware('ensure.permission:31,can_delete');
+        Route::get('/pet-behaviors', 'listBehaviors')->name('pet-behaviors')->middleware('ensure.permission:25,can_read');
+        Route::post('/pet-behavior/create', 'create')->name('create-behavior')->middleware('ensure.permission:25,can_create');
+        Route::post('/pet-behavior/update', 'update')->name('update-behavior')->middleware('ensure.permission:25,can_update');
+        Route::post('/pet-behavior/delete', 'delete')->name('delete-behavior')->middleware('ensure.permission:25,can_delete');
+    });
+
+    Route::controller(KennelController::class)->group(function () {
+        Route::get('/kennels', 'listKennels')->name('kennels')->middleware('ensure.permission:27,can_read');
+        Route::get('/kennel/add', 'addKennel')->name('add-kennel')->middleware('ensure.permission:27,can_create');
+        Route::get('/kennel/edit/{id}', 'editKennel')->name('edit-kennel')->middleware('ensure.permission:27,can_update');
+        Route::post('/kennel/create', 'createKennel')->name('create-kennel')->middleware('ensure.permission:27,can_create');
+        Route::post('/kennel/update', 'updateKennel')->name('update-kennel')->middleware('ensure.permission:27,can_update');
+        Route::post('/kennel/delete', 'deleteKennel')->name('delete-kennel')->middleware('ensure.permission:27,can_delete');
+        Route::post('/kennel/file/process', 'processFileUpload')->name('process-file-kennel');
+        Route::delete('/kennel/file/revert', 'revertFileUpload')->name('revert-file-kennel');
+    });
+
+    Route::controller(RoomController::class)->group(function () {
+        Route::get('/rooms', 'listRooms')->name('rooms')->middleware('ensure.permission:28,can_read');
+        Route::get('/room/add', 'addRoom')->name('add-room')->middleware('ensure.permission:28,can_create');
+        Route::get('/room/edit/{id}', 'editRoom')->name('edit-room')->middleware('ensure.permission:28,can_update');
+        Route::post('/room/create', 'createRoom')->name('create-room')->middleware('ensure.permission:28,can_create');
+        Route::post('/room/update', 'updateRoom')->name('update-room')->middleware('ensure.permission:28,can_update');
+        Route::post('/room/delete', 'deleteRoom')->name('delete-room')->middleware('ensure.permission:28,can_delete');
+        Route::post('/room/file/process', 'processFileUpload')->name('process-file-room');
+        Route::delete('/room/file/revert', 'revertFileUpload')->name('revert-file-room');
     });
 });

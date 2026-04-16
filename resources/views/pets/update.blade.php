@@ -205,12 +205,21 @@
                 <input class="grow focus:outline-0" placeholder="e.g. Fluffy" id="pet_name" name="pet_name" type="text" value="{{ $pet->name }}"/>
               </label>
             </div>
-            <div class="space-y-2">
-              <label class="fieldset-label" for="sex">Sex*</label>
-              <select class="select w-full" name="sex" id="sex" value="{{ $pet->sex }}">
-                <option value="male" {{ $pet->sex === 'male' ? 'selected' : '' }}>Male</option>
-                <option value="female" {{ $pet->sex === 'female' ? 'selected' : '' }}>Female</option>
-              </select>
+            <div class="grid grid-cols-1 gap-2 xl:grid-cols-2">
+              <div class="space-y-2">
+                <label class="fieldset-label" for="sex">Sex*</label>
+                <select class="select w-full" name="sex" id="sex" value="{{ $pet->sex }}">
+                  <option value="male" {{ $pet->sex === 'male' ? 'selected' : '' }}>Male</option>
+                  <option value="female" {{ $pet->sex === 'female' ? 'selected' : '' }}>Female</option>
+                </select>
+              </div>
+              <div class="space-y-2">
+                <label class="fieldset-label" for="type">Type*</label>
+                <select class="select w-full" name="type" id="type">
+                  <option value="Dog" {{ $pet->type === 'Dog' ? 'selected' : '' }}>Dog</option>
+                  <option value="Cat" {{ $pet->type === 'Cat' ? 'selected' : '' }}>Cat</option>
+                </select>
+              </div>
             </div>
             <div class="space-y-2">
               <label class="fieldset-label" for="spay_neuter">Spay/Neuter</label>
@@ -1387,7 +1396,7 @@
     </form>
     <h3 class="text-lg font-medium">Previous note</h3>
     <div class="p-2">
-      <div class="tabs tabs-boxed pb-2 flex-shrink-0">
+      <div class="tabs tabs-boxed pb-2 shrink-0">
         @foreach($previousNoteTabs as $idx => $tab)
         <button type="button" class="tab previous-note-tab {{ $idx === 0 ? 'tab-active' : '' }}"
           data-tab-id="{{ $tab['id'] }}"
