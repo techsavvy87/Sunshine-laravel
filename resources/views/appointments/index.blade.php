@@ -74,11 +74,11 @@
               <th>No</th>
               <th>Customer</th>
               <th>Pet</th>
+              <th>Kennel</th>
               <th>Service</th>
               <th>Staff</th>
-              <th style="text-align:center">Date</th>
-              <th style="text-align:center">Start Time</th>
-              <th style="text-align:center">End Time</th>
+              <th style="text-align:center">Start Date</th>
+              <th style="text-align:center">End Date</th>
               <th style="text-align:center">Status</th>
               <th style="padding-left: 30px">Action</th>
             </tr>
@@ -98,14 +98,14 @@
                 <i class="fa-solid fa-star" style="color: tomato"></i>
                 @endif
               </td>
+              <td>{{ $appointment->kennel->name }}</td>
               <td>{{ $appointment->service->name }}</td>
               <td>{{ $appointment->staff_id ? ($appointment->staff->profile ? $appointment->staff->profile->first_name : $appointment->staff->name) : 'Unassigned' }}</td>
-              <td style="text-align:center">{{ \Carbon\Carbon::parse($appointment->date)->format('m/d/Y') }}</td>
               <td style="text-align:center">
-                {{ $appointment->start_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->start_time)->format('h:i A') : '—' }}
+                {{ \Carbon\Carbon::parse($appointment->date)->format('m/d/Y') }}&nbsp;&nbsp;{{ $appointment->start_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->start_time)->format('h:i A') : '—' }}
               </td>
               <td style="text-align:center">
-                {{ $appointment->end_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') : '—' }}
+                {{ \Carbon\Carbon::parse($appointment->end_date)->format('m/d/Y') }}&nbsp;&nbsp;{{ $appointment->end_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') : '—' }}
               </td>
               <td style="text-align:center">
                 @if($appointment->status === 'checked_in')

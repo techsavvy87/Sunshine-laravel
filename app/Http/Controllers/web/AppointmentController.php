@@ -24,6 +24,7 @@ use App\Models\Transaction;
 use App\Models\Package;
 use App\Models\CustomerPackage;
 use App\Models\Notification;
+use App\Models\Kennel;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\Invoice as InvoiceMail;
@@ -100,19 +101,7 @@ class AppointmentController extends Controller
             $additionalServices = Service::where('status', 'active')->get();
         }
 
-        // Grooming (secondary) services
-        $additionalServicesGrooming = $additionalServices->filter(function ($item) {
-            return str_contains(strtolower(optional($item->category)->name), 'groom') && $item->level === 'secondary';
-        })->values();
-
-        // Training services
-        $additionalServicesTraining = $additionalServices->filter(function ($item) {
-            return str_contains(strtolower(optional($item->category)->name), 'training');
-        })->values();
-
         $services = Service::where('status', 'active')->where('level', 'primary')->get();
-        $groupClasses = GroupClass::where('status', 'active')->orderBy('started_at', 'desc')->get();
-        $packages = Package::where('status', 'active')->orderBy('created_at', 'desc')->get();
 
         // Secondary grooming services for selection (for dropdown etc)
         $secondaryServices = Service::where('status', 'active')
@@ -123,15 +112,16 @@ class AppointmentController extends Controller
             ->with('category')
             ->get();
 
+        $kennels = Kennel::where('status', 'In Service')
+            ->orderBy('name')
+            ->get();
+
         return view('appointments.create', compact(
             'services',
             'additionalServices',
-            'additionalServicesGrooming',
-            'additionalServicesTraining',
             'serviceId',
-            'groupClasses',
             'secondaryServices',
-            'packages'
+            'kennels'
         ));
     }
 
@@ -208,18 +198,18 @@ class AppointmentController extends Controller
             'service_id' => 'required|exists:services,id',
             'date' => 'required|date',
             'pet_id' => 'required|exists:pet_profiles,id',
-            'daycare_duration' => 'nullable|in:half,full',
-            'private_training_duration' => 'nullable|in:half,one',
             'secondary_service_ids' => 'nullable|array',
-            'secondary_service_ids.*' => 'exists:services,id'
+            'secondary_service_ids.*' => 'exists:services,id',
+            'pickup_time' => ['nullable', 'regex:/^\d{2}:\d{2}(:\d{2})?$/'],
+            'is_boarding_additional_service' => 'nullable|boolean'
         ]);
 
         $serviceId = $request->service_id;
         $date = $request->date;
         $petId = $request->pet_id;
-        $daycareDuration = $request->daycare_duration;
-        $privateTrainingDuration = $request->private_training_duration;
         $secondaryServiceIds = $request->secondary_service_ids ?? [];
+        $pickupTime = $request->pickup_time;
+        $isBoardingAdditionalService = $request->boolean('is_boarding_additional_service');
 
         $timeSlots = [];
 
@@ -228,69 +218,53 @@ class AppointmentController extends Controller
             $pet = PetProfile::find($petId);
             $petSize = $pet ? $pet->size : 'medium';
 
-            // Handle ala carte service
-            if (isAlaCarteService($service) && !empty($secondaryServiceIds)) {
-                $timeSlots = $this->getAlaCarteTimeSlots($serviceId, $date, $petSize, $secondaryServiceIds);
-            } else {
-                $query = TimeSlot::where('service_id', $serviceId)->whereDate('date', $date);
+            $query = TimeSlot::where('service_id', $serviceId)
+                    ->whereDate('date', $date)
+                    ->where('status', 'available')
+                    ->whereRaw('booked_count < capacity');
 
-                if (isGroomingService($service)) {
-                    $query->where('pet_size', $petSize);
-                } else if (isDaycareService($service)) {
-                    $query->where('daycare_type', $request->daycare_duration);
-                } else if (isPrivateTrainingService($service)) {
-                    $query->where('private_training_type', $request->private_training_duration);
-                }
+            $timeSlots = $query->orderBy('start_time')->get();
+        }
 
-                $timeSlots = $query->orderBy('start_time')->get();
-            }
+        if ($pickupTime) {
+            $timeSlots = $this->filterTimeSlotsByPickupTime($timeSlots, $pickupTime);
         }
 
         return response()->json($timeSlots);
     }
 
-    private function getAlaCarteTimeSlots($serviceId, $date, $petSize, $secondaryServiceIds)
+    private function serviceRequiresScheduledSlot($service): bool
     {
-        $services = Service::whereIn('id', $secondaryServiceIds)->get();
-        $serviceDurations = [];
-
-        foreach ($services as $service) {
-            $duration = $this->getServiceDuration($service, $petSize);
-            $serviceDurations[$service->id] = [
-                'service' => $service,
-                'duration_hours' => $duration,
-                'duration_minutes' => (int) round($duration * 60),
-            ];
+        if (!$service) {
+            return false;
         }
 
-        if (empty($serviceDurations)) {
-            return collect([]);
+        $serviceName = strtolower($service->name ?? '');
+        $categoryName = strtolower(optional($service->category)->name ?? '');
+
+        return str_contains($categoryName, 'groom')
+            || str_contains($categoryName, 'training')
+            || str_contains($serviceName, 'bath');
+    }
+
+    private function filterTimeSlotsByPickupTime($timeSlots, $pickupTime)
+    {
+        if (!$pickupTime) {
+            return collect($timeSlots)->values();
         }
 
-        $serviceTimeslots = [];
-        foreach ($serviceDurations as $serviceId => $serviceData) {
-            $service = $serviceData['service'];
+        $normalizedPickupTime = strlen($pickupTime) === 5 ? $pickupTime . ':00' : $pickupTime;
+        $pickupTimeCarbon = Carbon::createFromFormat('H:i:s', $normalizedPickupTime);
 
-            $query = TimeSlot::where('service_id', $serviceId)
-                ->whereDate('date', $date)
-                ->where('status', 'available')
-                ->whereRaw('booked_count < capacity');
+        return collect($timeSlots)->filter(function ($slot) use ($pickupTimeCarbon) {
+            $slotStartTime = Carbon::createFromFormat('H:i:s', $slot->start_time);
+            $slotEndTime = Carbon::createFromFormat('H:i:s', $slot->end_time);
 
-            if (serviceCaresAboutPetSize($service)) {
-                $query->where('pet_size', $petSize);
-            }
+            $endsAfterPickup = $slotEndTime->gt($pickupTimeCarbon);
+            $pickupFallsWithinSlot = $pickupTimeCarbon->gt($slotStartTime) && $pickupTimeCarbon->lt($slotEndTime);
 
-            $serviceTimeslots[$serviceId] = $query->orderBy('start_time')->get();
-        }
-
-        $solutions = $this->findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date);
-
-        $solutions = $solutions->map(function($solution, $index) {
-            $solution->id = $index + 1;
-            return $solution;
-        });
-
-        return $solutions;
+            return !$endsAfterPickup && !$pickupFallsWithinSlot;
+        })->values();
     }
 
     private function findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date)
@@ -700,14 +674,11 @@ class AppointmentController extends Controller
             'pet' => 'required|exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
             'staff' => 'nullable|exists:users,id',
+            'kennel' => 'nullable|exists:kennels,id',
             'date' => 'nullable|date',
-            'time_slot' => 'nullable',
+            'time_slot' => 'nullable|exists:time_slots,id',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
-            'secondary_services' => 'nullable|array',
-            'secondary_services.*' => 'exists:services,id',
-            'group_class_ids' => 'nullable|array',
-            'group_class_ids.*' => 'exists:group_classes,id',
         ]);
 
         $timeSlot = TimeSlot::with('service.category')->find($request->time_slot);
@@ -732,95 +703,121 @@ class AppointmentController extends Controller
         }
 
         $service = Service::with('category')->find($request->service);
+
+        if (isBoardingService($service) && !$request->filled('kennel')) {
+            return back()->withErrors([
+                'kennel' => 'Please select a kennel for the boarding appointment.'
+            ])->withInput();
+        }
+
+        $selectedAdditionalServiceIds = $request->input('additional_services', []);
+        $selectedAdditionalServices = !empty($selectedAdditionalServiceIds)
+            ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
+            : collect([]);
+
+        $requiresAdditionalServiceTimeSlot = isBoardingService($service)
+            && $selectedAdditionalServices->contains(function ($additionalService) {
+                return $this->serviceRequiresScheduledSlot($additionalService);
+            });
+
+        if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
+            return back()->withErrors([
+                'time_slot' => 'Please select a valid time slot for the additional service.'
+            ])->withInput();
+        }
+
         if ($request->has('secondary_services')) {
             $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
         }
 
-        $usedSlotIds = [];
-        $alaCarteStartTime = null;
-        $alaCarteEndTime = null;
-        if (isAlaCarteService($service) && $request->filled('time_slot_data')) {
-            $slotData = json_decode($request->time_slot_data, true);
-            if ($slotData) {
-                if (isset($slotData['used_slot_ids'])) {
-                    $usedSlotIds = $slotData['used_slot_ids'];
-                    $metadata['used_slot_ids'] = implode(',', $usedSlotIds);
-                }
-                if (isset($slotData['start_time'])) {
-                    $alaCarteStartTime = $slotData['start_time'];
-                }
-                if (isset($slotData['end_time'])) {
-                    $alaCarteEndTime = $slotData['end_time'];
-                }
-            }
+        if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
+            $metadata['additional_service_time_slot_id'] = $timeSlot->id;
+            $metadata['additional_service_time_slot_service_id'] = $timeSlot->service_id;
+            $metadata['additional_service_time_slot_date'] = $timeSlot->date;
+            $metadata['additional_service_time_slot_start_time'] = $timeSlot->start_time;
+            $metadata['additional_service_time_slot_end_time'] = $timeSlot->end_time;
         }
 
-        if (isGroupClassService($service) && $request->filled('group_class_ids')) {
-            handleGroupClasses($request->group_class_ids, $request->customer, $request->pet, $request->service, $request->staff ?? null);
-        } else {
-            // Create the appointment
-            $appointment = new Appointment;
-            $appointment->customer_id = $request->customer;
-            $appointment->pet_id = $request->pet;
-            $appointment->service_id = $request->service;
+        $usedSlotIds = [];
 
-            if ($request->filled('staff'))
-                $appointment->staff_id = $request->staff;
+        
+        // Create the appointment
+        $appointment = new Appointment;
+        $appointment->customer_id = $request->customer;
+        $appointment->pet_id = $request->pet;
+        $appointment->service_id = $request->service;
+        $appointment->kennel_id = $request->filled('kennel') ? $request->kennel : null;
 
-            if ($request->filled('date')) {
-                $appointment->date = $request->date;
+        // If kennel is selected for boarding service, mark the kennel as Out of Service
+        Kennel::where('id', $request->kennel)->update(['status' => 'Out of Service']);
 
-                if (isAlaCarteService($service) && $alaCarteStartTime && $alaCarteEndTime) {
-                    $appointment->start_time = $alaCarteStartTime;
-                    $appointment->end_time = $alaCarteEndTime;
-                } else {
-                    $appointment->start_time = $timeSlot ? $timeSlot->start_time : null;
-                    $appointment->end_time = $timeSlot ? $timeSlot->end_time : null;
+        if ($request->filled('staff'))
+            $appointment->staff_id = $request->staff;
+
+        if ($request->filled('date')) {
+            $appointment->date = $request->date;
+
+            if (isAlaCarteService($service) && $alaCarteStartTime && $alaCarteEndTime) {
+                $appointment->start_time = $alaCarteStartTime;
+                $appointment->end_time = $alaCarteEndTime;
+            } else {
+                $appointment->start_time = $timeSlot ? $timeSlot->start_time : null;
+                $appointment->end_time = $timeSlot ? $timeSlot->end_time : null;
+            }
+        } else if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+            $startDateTime = Carbon::parse($request->boarding_start_datetime);
+            $endDateTime = Carbon::parse($request->boarding_end_datetime);
+
+            if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
+                $timeSlotStart = Carbon::parse($timeSlot->date . ' ' . $timeSlot->start_time);
+                $timeSlotEnd = Carbon::parse($timeSlot->date . ' ' . $timeSlot->end_time);
+
+                if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
+                    return back()->withErrors([
+                        'time_slot' => 'The selected additional service time slot must end before the pick up time.'
+                    ])->withInput();
                 }
-            } else if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
-                $startDateTime = Carbon::parse($request->boarding_start_datetime);
-                $endDateTime = Carbon::parse($request->boarding_end_datetime);
+            }
 
-                $appointment->date = $startDateTime->toDateString();
-                $appointment->start_time = $startDateTime->toTimeString();
-                $appointment->end_date = $endDateTime->toDateString();
-                $appointment->end_time = $endDateTime->toTimeString();
+            $appointment->date = $startDateTime->toDateString();
+            $appointment->start_time = $startDateTime->toTimeString();
+            $appointment->end_date = $endDateTime->toDateString();
+            $appointment->end_time = $endDateTime->toTimeString();
 
-                if (isBoardingService($service)) {
-                    $boardingTotal = getBoardingServicePrice($service, $appointment);
-                    if ($boardingTotal === null) {
-                        $boardingTotal = 0;
-                    }
+            if (isBoardingService($service)) {
+                $boardingTotal = getBoardingServicePrice($service, $appointment);
+                if ($boardingTotal === null) {
+                    $boardingTotal = 0;
+                }
 
-                    $additionalServicesTotal = 0;
-                    if ($request->filled('additional_services')) {
-                        $pet = PetProfile::find($request->pet);
-                        $petSize = $pet ? $pet->size : 'medium';
+                $additionalServicesTotal = 0;
+                if ($request->filled('additional_services')) {
+                    $pet = PetProfile::find($request->pet);
+                    $petSize = $pet ? $pet->size : 'medium';
 
-                        $additionalServiceIds = $request->additional_services;
-                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
+                    $additionalServiceIds = $request->additional_services;
+                    $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
 
-                        foreach ($additionalServices as $addService) {
-                            if (isChauffeurService($addService)) {
-                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
-                            } else {
-                                $additionalServicesTotal += getServicePrice($addService, $petSize);
-                            }
+                    foreach ($additionalServices as $addService) {
+                        if (isChauffeurService($addService)) {
+                            $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
+                        } else {
+                            $additionalServicesTotal += getServicePrice($addService, $petSize);
                         }
                     }
-
-                    $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
                 }
+
+                $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
             }
-            $appointment->status = 'checked_in';
-
-            $appointment->additional_service_ids = $request->filled('additional_services') ?
-                implode(',', $request->additional_services) : null;
-
-            $appointment->metadata = !empty($metadata) ? $metadata : null;
-            $appointment->save();
-            appointment_audit_log($appointment->id, "Appointment is created.");
         }
+        $appointment->status = 'checked_in';
+
+        $appointment->additional_service_ids = $request->filled('additional_services') ?
+            implode(',', $request->additional_services) : null;
+
+        $appointment->metadata = !empty($metadata) ? $metadata : null;
+        $appointment->save();
+        appointment_audit_log($appointment->id, "Appointment is created.");
 
         if ($timeSlot && !is_null($timeSlot->capacity)) {
             if ($timeSlot->booked_count < $timeSlot->capacity) {
@@ -855,108 +852,6 @@ class AppointmentController extends Controller
     {
         $invoiceNumber = Invoice::generateInvoiceNumber();
         return response()->json(['invoice_number' => $invoiceNumber]);
-    }
-
-    public function createPackageAppointment(Request $request)
-    {
-        $request->validate([
-            'customer' => 'required|exists:users,id',
-            'pet' => 'required|exists:pet_profiles,id',
-            'service' => 'required|exists:services,id',
-            'date' => 'required|date',
-            'package_id' => 'required|exists:packages,id',
-            'customer_package_id' => 'nullable|exists:customer_packages,id',
-        ]);
-
-        $service = Service::with('category')->find($request->service);
-        $package = Package::find($request->package_id);
-
-        if (!isPackageService($service) || !$package) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid package or service.'
-            ], 422);
-        }
-
-        $pet = PetProfile::find($request->pet);
-        if (!$pet) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Pet not found.'
-            ], 422);
-        }
-
-        // Validation warnings (not blocking for admin)
-        $validationWarnings = [];
-        if ($package->service_ids) {
-            $serviceIds = array_map('trim', explode(',', $package->service_ids));
-            $packageServices = Service::whereIn('id', $serviceIds)->with('category')->get();
-
-            $requiredCategories = [];
-
-            foreach ($packageServices as $packageService) {
-                if (isGroupClassService($packageService)) {
-                    continue;
-                }
-
-                if ($packageService->category) {
-                    $requiredCategories[$packageService->category->id] = $packageService->category;
-                }
-            }
-
-            foreach ($requiredCategories as $category) {
-                $categoryQuestionnaire = Questionnaire::where('pet_id', $pet->id)
-                    ->where('user_id', $pet->user_id)
-                    ->where('service_category_id', $category->id)
-                    ->orderBy('created_at', 'desc')
-                    ->first();
-                if (!$categoryQuestionnaire || $categoryQuestionnaire->status !== 'approved') {
-                    $validationWarnings[] = 'Pet questionnaire for ' . $category->name . ' is not approved.';
-                }
-            }
-        }
-
-        $appointment = new Appointment;
-        $appointment->customer_id = $request->customer;
-        $appointment->pet_id = $request->pet;
-        $appointment->service_id = $request->service;
-        $appointment->date = $request->date;
-        $appointment->additional_service_ids = $package->service_ids;
-        $appointment->estimated_price = floatval($package->price ?? 0);
-
-        $days = intval($package->days ?? 0);
-        if ($days > 0) {
-            $startDate = Carbon::parse($request->date);
-            $endDate = $startDate->copy()->addDays(max(0, $days - 1));
-            $appointment->end_date = $endDate->toDateString();
-        }
-
-        $metadata = [
-            'package_id' => (string)$package->id
-        ];
-        
-        // Handle customer package if provided
-        if ($request->filled('customer_package_id')) {
-            $customerPackage = CustomerPackage::find($request->customer_package_id);
-            if ($customerPackage && $customerPackage->customer_id == $request->customer) {
-                $metadata['customer_package_id'] = (string)$customerPackage->id;
-            }
-        }
-        
-        $appointment->metadata = $metadata;
-        $appointment->status = 'checked_in';
-        $appointment->save();
-        appointment_audit_log($appointment->id, "Appointment is created.");
-
-        $message = 'Package appointment created successfully.';
-        if (!empty($validationWarnings)) {
-            $message .= ' ' . implode(' ', $validationWarnings);
-        }
-
-        return redirect()->route('appointments')->with([
-            'message' => $message,
-            'status' => 'success'
-        ]);
     }
 
     private function createInvoiceForAppointment($appointment, $request)
@@ -1018,43 +913,38 @@ class AppointmentController extends Controller
         $additionalServices = Service::where('status', 'active')->whereNot('id', $appointment->service_id)->get();
 
         $service = Service::with('category')->find($appointment->service_id);
-
         $timeSlots = collect([]);
 
-        if (isAlaCarteService($service) && $appointment->metadata && isset($appointment->metadata['secondary_service_ids']) && $appointment->date) {
-            $pet = PetProfile::find($appointment->pet_id);
-            $petSize = $pet ? $pet->size : 'medium';
-            $secondaryServiceIds = explode(',', $appointment->metadata['secondary_service_ids']);
-            $timeSlots = $this->getAlaCarteTimeSlots($appointment->service_id, $appointment->date, $petSize, $secondaryServiceIds);
-        } else {
-            $query = TimeSlot::where('service_id', $appointment->service_id)->whereDate('date', $appointment->date);
+        if (isBoardingService($service)) {
+            $slotServiceId = $appointment->metadata['additional_service_time_slot_service_id'] ?? null;
+            $slotDate = $appointment->metadata['additional_service_time_slot_date'] ?? $appointment->end_date;
+            $pickupTime = $appointment->end_time;
 
-            if (isGroomingService($service)) {
-                $pet = PetProfile::find($appointment->pet_id);
-                $petSize = $pet ? $pet->size : 'medium';
-                $query->where('pet_size', $petSize);
-            } else if (isDaycareService($service)) {
-                $query->where('daycare_type', $appointment->metadata['daycare_duration'] === 'full_day' ? 'full' : 'half');
-            } else if (isPrivateTrainingService($service)) {
-                $query->where('private_training_type', $appointment->metadata['private_training_duration'] === 'one_hour' ? 'one' : 'half');
+            if ($slotServiceId && $slotDate && $appointment->pet_id) {
+                $timeSlots = TimeSlot::where('service_id', $slotServiceId)
+                    ->whereDate('date', $slotDate)
+                    ->orderBy('start_time')
+                    ->get();
+
+                if ($pickupTime) {
+                    $timeSlots = $this->filterTimeSlotsByPickupTime($timeSlots, $pickupTime);
+                }
+
+                $selectedSlotId = $appointment->metadata['additional_service_time_slot_id'] ?? null;
+                if ($selectedSlotId) {
+                    $selectedSlot = TimeSlot::find($selectedSlotId);
+                    if ($selectedSlot && !$timeSlots->contains('id', $selectedSlot->id)) {
+                        $timeSlots->prepend($selectedSlot);
+                    }
+                }
             }
-
-            $timeSlots = $query->orderBy('start_time')->get();
         }
-        $groupClasses = GroupClass::where('status', 'active')->orderBy('started_at', 'desc')->get();
 
+        $kennels = Kennel::where('status', 'In Service')->orderBy('name')->get();
+        $selectedKennel = Kennel::find($appointment->kennel_id);
+        $kennels = $kennels->merge([$selectedKennel])->unique('id')->values();
 
-        $secondaryServices = Service::where('status', 'active')
-            ->where('level', 'secondary')
-            ->whereHas('category', function($query) {
-                $query->whereRaw('LOWER(name) LIKE ?', ['%groom%']);
-            })
-            ->with('category')
-            ->get();
-
-        $packages = Package::where('status', 'active')->orderBy('created_at', 'desc')->get();
-
-        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'groupClasses', 'secondaryServices', 'packages'));
+        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'kennels'));
     }
 
     public function update(Request $request)
@@ -1065,127 +955,110 @@ class AppointmentController extends Controller
             'pet' => 'required|exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
             'staff' => 'nullable|exists:users,id',
+            'kennel' => 'nullable|exists:kennels,id',
             'date' => 'nullable|date',
             'time_slot' => 'nullable',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
-            'secondary_services' => 'nullable|array',
-            'secondary_services.*' => 'exists:services,id',
-            'group_class_ids' => 'nullable|array',
-            'group_class_ids.*' => 'exists:group_classes,id',
         ]);
 
-        $timeSlot = TimeSlot::with('service.category')->find($request->time_slot);
-
-        $metadata = [];
-        if ($timeSlot) {
-            if (isDaycareService($timeSlot->service)) {
-                if ($timeSlot->daycare_type) {
-                    $metadata['daycare_duration'] = $timeSlot->daycare_type === 'full' ? 'full_day' : 'half_day';
-
-                    if ($timeSlot->daycare_type === 'half') {
-                        $startTime = Carbon::parse($timeSlot->start_time);
-                        $metadata['session'] = $startTime->hour < 13 ? 'morning' : 'afternoon';
-                    }
-                }
-            }
-            if (isPrivateTrainingService($timeSlot->service)) {
-                if ($timeSlot->private_training_type) {
-                    $metadata['private_training_duration'] = $timeSlot->private_training_type === 'one' ? 'one_hour' : 'half_hour';
-                }
-            }
-        }
-
-        $service = Service::with('category')->find($request->service);
-        if ($request->has('secondary_services')) {
-            $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
-        }
-
-        // Handle ala carte service slot data
-        $alaCarteStartTime = null;
-        $alaCarteEndTime = null;
-        if (isAlaCarteService($service) && $request->filled('time_slot_data')) {
-            $slotData = json_decode($request->time_slot_data, true);
-            if ($slotData) {
-                if (isset($slotData['used_slot_ids'])) {
-                    $metadata['used_slot_ids'] = implode(',', $slotData['used_slot_ids']);
-                }
-                if (isset($slotData['start_time'])) {
-                    $alaCarteStartTime = $slotData['start_time'];
-                }
-                if (isset($slotData['end_time'])) {
-                    $alaCarteEndTime = $slotData['end_time'];
-                }
-            }
-        }
-
         $appointment = Appointment::findOrFail($request->appointment_id);
+        $timeSlot = $request->filled('time_slot')
+            ? TimeSlot::with('service.category')->find($request->time_slot)
+            : null;
+
+        $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
+        $service = Service::with('category')->find($request->service);
+
+        if (isBoardingService($service) && !$request->filled('kennel')) {
+            return back()->withErrors([
+                'kennel' => 'Please select a kennel for the boarding appointment.'
+            ])->withInput();
+        }
+
+        $selectedAdditionalServiceIds = $request->input('additional_services', []);
+        $selectedAdditionalServices = !empty($selectedAdditionalServiceIds)
+            ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
+            : collect([]);
+
+        $requiresAdditionalServiceTimeSlot = isBoardingService($service)
+            && $selectedAdditionalServices->contains(function ($additionalService) {
+                return $this->serviceRequiresScheduledSlot($additionalService);
+            });
+
+        if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
+            return back()->withErrors([
+                'time_slot' => 'Please select a valid time slot for the additional service.'
+            ])->withInput();
+        }
+
+        if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
+            $metadata['additional_service_time_slot_id'] = $timeSlot->id;
+            $metadata['additional_service_time_slot_service_id'] = $timeSlot->service_id;
+            $metadata['additional_service_time_slot_date'] = $timeSlot->date;
+            $metadata['additional_service_time_slot_start_time'] = $timeSlot->start_time;
+            $metadata['additional_service_time_slot_end_time'] = $timeSlot->end_time;
+        } else {
+            unset(
+                $metadata['additional_service_time_slot_id'],
+                $metadata['additional_service_time_slot_service_id'],
+                $metadata['additional_service_time_slot_date'],
+                $metadata['additional_service_time_slot_start_time'],
+                $metadata['additional_service_time_slot_end_time']
+            );
+        }
+
         $oldStatus = $appointment->status;
         $appointment->customer_id = $request->customer;
         $appointment->pet_id = $request->pet;
         $appointment->service_id = $request->service;
-        if ($request->filled('staff'))
-            $appointment->staff_id = $request->staff; // Optional
-        else
+        $appointment->kennel_id = $request->filled('kennel') ? $request->kennel : null;
+        $appointment->additional_service_ids = !empty($selectedAdditionalServiceIds)
+            ? implode(',', $selectedAdditionalServiceIds)
+            : null;
+
+        if ($request->filled('staff')) {
+            $appointment->staff_id = $request->staff;
+        } else {
             $appointment->staff_id = null;
+        }
 
-        if (!isGroupClassService($service)) {
-            if ($request->filled('date')) {
-                $appointment->date = $request->date;
-                // For ala carte services, use the calculated start_time and end_time from slot data
-                if (isAlaCarteService($service) && $alaCarteStartTime && $alaCarteEndTime) {
-                    $appointment->start_time = $alaCarteStartTime;
-                    $appointment->end_time = $alaCarteEndTime;
-                } else {
-                    $appointment->start_time = $timeSlot ? $timeSlot->start_time : null;
-                    $appointment->end_time = $timeSlot ? $timeSlot->end_time : null;
-                }
-            } else if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
-                $startDateTime = Carbon::parse($request->boarding_start_datetime);
-                $endDateTime = Carbon::parse($request->boarding_end_datetime);
+        if (isBoardingService($service) && $request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+            $startDateTime = Carbon::parse($request->boarding_start_datetime);
+            $endDateTime = Carbon::parse($request->boarding_end_datetime);
 
-                $appointment->date = $startDateTime->toDateString();
-                $appointment->start_time = $startDateTime->toTimeString();
-                $appointment->end_date = $endDateTime->toDateString();
-                $appointment->end_time = $endDateTime->toTimeString();
+            if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
+                $timeSlotStart = Carbon::parse($timeSlot->date . ' ' . $timeSlot->start_time);
+                $timeSlotEnd = Carbon::parse($timeSlot->date . ' ' . $timeSlot->end_time);
 
-                if (isBoardingService($service)) {
-                    $boardingTotal = getBoardingServicePrice($service, $appointment);
-                    if ($boardingTotal === null) {
-                        $boardingTotal = 0;
-                    }
-
-                    $additionalServicesTotal = 0;
-                    if ($request->filled('additional_services')) {
-                        $pet = PetProfile::find($request->pet);
-                        $petSize = $pet ? $pet->size : 'medium';
-
-                        $additionalServiceIds = $request->additional_services;
-                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
-
-                        foreach ($additionalServices as $addService) {
-                            if (isChauffeurService($addService)) {
-                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
-                            } else {
-                                $additionalServicesTotal += getServicePrice($addService, $petSize);
-                            }
-                        }
-                    }
-
-                    $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
+                if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
+                    return back()->withErrors([
+                        'time_slot' => 'The selected additional service time slot must end before the pick up time.'
+                    ])->withInput();
                 }
             }
 
-            $appointment->additional_service_ids = $request->filled('additional_services') ? implode(',', $request->additional_services) : null;
-            if (!isPackageService($service)) {
-                $appointment->metadata = !empty($metadata) ? $metadata : null;
+            $appointment->date = $startDateTime->toDateString();
+            $appointment->start_time = $startDateTime->toTimeString();
+            $appointment->end_date = $endDateTime->toDateString();
+            $appointment->end_time = $endDateTime->toTimeString();
+        } elseif ($timeSlot) {
+            $appointment->date = $timeSlot->date;
+            $appointment->start_time = $timeSlot->start_time;
+            $appointment->end_time = $timeSlot->end_time;
+
+            if (!isBoardingService($service)) {
+                $appointment->end_date = null;
             }
         }
+
+        $appointment->metadata = !empty($metadata) ? $metadata : null;
 
         if ($request->filled('status')) {
             $newStatus = $request->status;
             if (in_array($newStatus, ['cancelled', 'no_show'])) {
                 $appointment->status = $newStatus;
+                Kennel::where('id', $request->kennel)->update(['status' => 'In Service']);
                 if ($oldStatus !== $newStatus) {
                     appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label($newStatus, $appointment->service) . ".");
                     $this->saveCancellationRecord($appointment, $newStatus);
@@ -1924,13 +1797,6 @@ class AppointmentController extends Controller
             $process->notes = $request->notes;
             $process->save();
         }
-
-        // $checkout = Checkout::where('appointment_id', $appointment->id)->first();
-        // if (!$checkout) {
-        //     $checkout = new Checkout;
-        //     $checkout->appointment_id = $appointment->id;
-        // }
-        // $checkout->save();
 
         return redirect()->route('service-dashboard', ['id' => $appointment->service_id])->with([
             'message' => 'Grooming process has been completed successfully.',

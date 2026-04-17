@@ -29,8 +29,8 @@ class TimeSlotController extends Controller
         // Determine the service ID from search parameters
         if ($request->filled('serviceId'))
             $serviceId = $request->get('serviceId');
-        else
-            $serviceId = Service::where('status', 'active')->whereIn('level', ['primary', 'secondary'])->first()->id ?? null;
+        else 
+            $serviceId = Service::where('status', 'active')->whereIn('level', ['secondary'])->first()->id ?? null;
 
         // Determine the date from search parameters
         if ($request->filled('date'))

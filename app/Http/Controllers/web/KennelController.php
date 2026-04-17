@@ -98,16 +98,25 @@ class KennelController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:dog,cat',
-            'capacity' => 'required|integer|min:1',
+            'capacity' => 'nullable|integer|min:1',
             'status' => 'required|in:In Service,Out of Service,Cleaning',
             'temp_file' => 'nullable|string',
         ]);
 
+        $normalizedName = trim((string) $request->name);
+
+        if (Kennel::whereRaw('LOWER(name) = ?', [strtolower($normalizedName)])->exists()) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Kennel name already exists.'
+            ]);
+        }
+
         $kennel = new Kennel();
-        $kennel->name = $request->name;
+        $kennel->name = $normalizedName;
         $kennel->description = $request->description;
         $kennel->type = $request->type;
-        $kennel->capacity = $request->capacity;
+        $kennel->capacity = $request->input('capacity', 1);
         $kennel->status = $request->status;
 
         if ($request->filled('temp_file')) {
@@ -149,8 +158,19 @@ class KennelController extends Controller
             'current_img' => 'nullable|string',
         ]);
 
+        $normalizedName = trim((string) $request->name);
+
+        if (Kennel::whereRaw('LOWER(name) = ?', [strtolower($normalizedName)])
+            ->where('id', '!=', $request->id)
+            ->exists()) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Kennel name already exists.'
+            ]);
+        }
+
         $kennel = Kennel::findOrFail($request->id);
-        $kennel->name = $request->name;
+        $kennel->name = $normalizedName;
         $kennel->description = $request->description;
         $kennel->type = $request->type;
         $kennel->capacity = $request->capacity;

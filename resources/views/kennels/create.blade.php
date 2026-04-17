@@ -21,6 +21,7 @@
   @include('layouts.alerts')
   <form action="{{ route('create-kennel') }}" method="POST" enctype="multipart/form-data" id="create_form">
     @csrf
+    <input type="hidden" name="capacity" value="{{ old('capacity', 1) }}" />
     <div class="grid grid-cols-1 gap-5 xl:grid-cols-4 mt-3">
       <div class="xl:col-span-1">
         <div class="card bg-base-100 shadow">
@@ -41,33 +42,27 @@
               <div class="xl:col-span-2 space-y-2">
                 <label class="fieldset-label" for="name">Kennel Name*</label>
                 <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. Room A" id="name" name="name" type="text" />
+                  <input class="grow focus:outline-0" placeholder="e.g. Room A" id="name" name="name" type="text" value="{{ old('name') }}" />
                 </label>
               </div>
               <div class="space-y-2">
                 <label class="fieldset-label" for="type">Type*</label>
                 <select class="select w-full" name="type" id="type">
-                  <option value="dog">Dog</option>
-                  <option value="cat">Cat</option>
+                  <option value="dog" {{ old('type', 'dog') === 'dog' ? 'selected' : '' }}>Dog</option>
+                  <option value="cat" {{ old('type') === 'cat' ? 'selected' : '' }}>Cat</option>
                 </select>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="capacity">Capacity*</label>
-                <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. 1" id="capacity" name="capacity" type="number" min="1" step="1" value="1" />
-                </label>
-              </div>
-              <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="status">Status*</label>
                 <select class="select w-full" name="status" id="status">
-                  <option value="In Service">In Service</option>
-                  <option value="Out of Service">Out of Service</option>
-                  <option value="Cleaning">Cleaning</option>
+                  <option value="In Service" {{ old('status', 'In Service') === 'In Service' ? 'selected' : '' }}>In Service</option>
+                  <option value="Out of Service" {{ old('status') === 'Out of Service' ? 'selected' : '' }}>Out of Service</option>
+                  <option value="Cleaning" {{ old('status') === 'Cleaning' ? 'selected' : '' }}>Cleaning</option>
                 </select>
               </div>
               <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="description">Description</label>
-                <textarea class="textarea w-full min-h-24" placeholder="Description" name="description" id="description"></textarea>
+                <textarea class="textarea w-full min-h-24" placeholder="Description" name="description" id="description">{{ old('description') }}</textarea>
               </div>
             </div>
           </div>
@@ -95,6 +90,14 @@
 
   <script>
     FilePond.registerPlugin(FilePondPluginImagePreview);
+
+    const alert_modal = document.getElementById('alert_modal') || null;
+    const pageAlertMessage = @json(session('status') === 'fail' ? session('message') : ($errors->any() ? $errors->first() : ''));
+
+    if (pageAlertMessage && alert_modal) {
+      $('#alert_message').text(pageAlertMessage);
+      alert_modal.showModal();
+    }
 
     const inputElement = document.querySelector('input[type="file"][data-filepond]');
     if (inputElement) {

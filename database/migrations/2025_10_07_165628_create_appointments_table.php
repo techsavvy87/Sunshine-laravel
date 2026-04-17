@@ -16,6 +16,7 @@ return new class extends Migration
             $table->foreignId('customer_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('pet_id')->constrained('pet_profiles')->onDelete('cascade');
             $table->foreignId('service_id')->constrained('services')->onDelete('cascade');
+            $table->unsignedBigInteger('kennel_id');
             $table->string('additional_service_ids')->nullable();
             $table->foreignId('staff_id')->nullable();
             $table->date('date')->nullable();

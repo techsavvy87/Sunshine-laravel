@@ -15,6 +15,11 @@ class Appointment extends Model
         return $this->belongsTo(PetProfile::class, 'pet_id', 'id');
     }
 
+    public function kennel()
+    {
+        return $this->belongsTo(Kennel::class, 'kennel_id', 'id');
+    }
+
     public function staff()
     {
         return $this->belongsTo(User::class, 'staff_id', 'id');
