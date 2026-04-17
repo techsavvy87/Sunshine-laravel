@@ -25,6 +25,7 @@ use App\Models\Package;
 use App\Models\CustomerPackage;
 use App\Models\Notification;
 use App\Models\Kennel;
+use App\Models\Room;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\Invoice as InvoiceMail;
@@ -116,12 +117,18 @@ class AppointmentController extends Controller
             ->orderBy('name')
             ->get();
 
+        $rooms = Room::where('status', 'Available')
+            ->where('type', 'cat')
+            ->orderBy('name')
+            ->get();
+
         return view('appointments.create', compact(
             'services',
             'additionalServices',
             'serviceId',
             'secondaryServices',
-            'kennels'
+            'kennels',
+            'rooms'
         ));
     }
 
@@ -671,15 +678,23 @@ class AppointmentController extends Controller
     {
         $request->validate([
             'customer' => 'required|exists:users,id',
-            'pet' => 'required|exists:pet_profiles,id',
+            'pet' => 'required|array|min:1',
+            'pet.*' => 'exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
+            'room' => 'nullable|exists:rooms,id',
             'date' => 'nullable|date',
             'time_slot' => 'nullable|exists:time_slots,id',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
         ]);
+
+        $petIds = collect($request->input('pet', []))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
 
         $timeSlot = TimeSlot::with('service.category')->find($request->time_slot);
 
@@ -703,11 +718,37 @@ class AppointmentController extends Controller
         }
 
         $service = Service::with('category')->find($request->service);
+        $selectedPets = PetProfile::whereIn('id', $petIds)->get();
+        $allSelectedPetsAreCats = $selectedPets->isNotEmpty()
+            && $selectedPets->every(fn ($pet) => strtolower((string) $pet->type) === 'cat');
 
-        if (isBoardingService($service) && !$request->filled('kennel')) {
-            return back()->withErrors([
-                'kennel' => 'Please select a kennel for the boarding appointment.'
-            ])->withInput();
+        $assignedKennelId = $request->filled('kennel') ? (int) $request->kennel : null;
+        $selectedRoom = null;
+
+        if (isBoardingService($service)) {
+            if ($allSelectedPetsAreCats) {
+                if (!$request->filled('room')) {
+                    return back()->withErrors([
+                        'room' => 'Please select a cat room for the boarding appointment.'
+                    ])->withInput();
+                }
+
+                $selectedRoom = Room::where('status', 'Available')
+                    ->where('type', 'cat')
+                    ->find($request->room);
+
+                if (!$selectedRoom) {
+                    return back()->withErrors([
+                        'room' => 'The selected room is not available for cat boarding.'
+                    ])->withInput();
+                }
+
+                $assignedKennelId = null;
+            } elseif (!$assignedKennelId) {
+                return back()->withErrors([
+                    'kennel' => 'Please select a kennel for the boarding appointment.'
+                ])->withInput();
+            }
         }
 
         $selectedAdditionalServiceIds = $request->input('additional_services', []);
@@ -715,10 +756,15 @@ class AppointmentController extends Controller
             ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
             : collect([]);
 
-        $requiresAdditionalServiceTimeSlot = isBoardingService($service)
-            && $selectedAdditionalServices->contains(function ($additionalService) {
-                return $this->serviceRequiresScheduledSlot($additionalService);
-            });
+        $requiresBoardingAdditionalService = isBoardingService($service);
+
+        if ($requiresBoardingAdditionalService && empty($selectedAdditionalServiceIds)) {
+            return back()->withErrors([
+                'additional_services' => 'Please select at least one additional service for the boarding appointment.'
+            ])->withInput();
+        }
+
+        $requiresAdditionalServiceTimeSlot = $requiresBoardingAdditionalService && $selectedAdditionalServices->isNotEmpty();
 
         if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
             return back()->withErrors([
@@ -728,6 +774,11 @@ class AppointmentController extends Controller
 
         if ($request->has('secondary_services')) {
             $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
+        }
+
+        if ($selectedRoom) {
+            $metadata['room_id'] = $selectedRoom->id;
+            $metadata['room_name'] = $selectedRoom->name;
         }
 
         if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
@@ -740,19 +791,30 @@ class AppointmentController extends Controller
 
         $usedSlotIds = [];
 
-        
-        // Create the appointment
+        if ($timeSlot && !is_null($timeSlot->capacity) && ($timeSlot->booked_count + count($petIds)) > $timeSlot->capacity) {
+            return back()->withErrors([
+                'time_slot' => 'The selected time slot does not have enough capacity for all selected pets.'
+            ])->withInput();
+        }
+
+        $primaryPetId = $petIds[0] ?? null;
+
+        if (count($petIds) > 1) {
+            $metadata['family_pet_ids'] = $petIds;
+        } else {
+            unset($metadata['family_pet_ids']);
+        }
+
         $appointment = new Appointment;
         $appointment->customer_id = $request->customer;
-        $appointment->pet_id = $request->pet;
+        $appointment->pet_id = $primaryPetId;
         $appointment->service_id = $request->service;
-        $appointment->kennel_id = $request->filled('kennel') ? $request->kennel : null;
+        $appointment->kennel_id = $assignedKennelId;
+        $appointment->cat_room_id = $selectedRoom?->id;
 
-        // If kennel is selected for boarding service, mark the kennel as Out of Service
-        Kennel::where('id', $request->kennel)->update(['status' => 'Out of Service']);
-
-        if ($request->filled('staff'))
+        if ($request->filled('staff')) {
             $appointment->staff_id = $request->staff;
+        }
 
         if ($request->filled('date')) {
             $appointment->date = $request->date;
@@ -785,24 +847,29 @@ class AppointmentController extends Controller
             $appointment->end_time = $endDateTime->toTimeString();
 
             if (isBoardingService($service)) {
-                $boardingTotal = getBoardingServicePrice($service, $appointment);
-                if ($boardingTotal === null) {
-                    $boardingTotal = 0;
-                }
-
+                $boardingTotal = 0;
                 $additionalServicesTotal = 0;
-                if ($request->filled('additional_services')) {
-                    $pet = PetProfile::find($request->pet);
-                    $petSize = $pet ? $pet->size : 'medium';
 
-                    $additionalServiceIds = $request->additional_services;
-                    $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
+                foreach ($petIds as $petId) {
+                    $priceAppointment = clone $appointment;
+                    $priceAppointment->pet_id = $petId;
 
-                    foreach ($additionalServices as $addService) {
-                        if (isChauffeurService($addService)) {
-                            $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
-                        } else {
-                            $additionalServicesTotal += getServicePrice($addService, $petSize);
+                    $petBoardingTotal = getBoardingServicePrice($service, $priceAppointment);
+                    $boardingTotal += $petBoardingTotal === null ? 0 : $petBoardingTotal;
+
+                    if ($request->filled('additional_services')) {
+                        $pet = PetProfile::find($petId);
+                        $petSize = $pet ? $pet->size : 'medium';
+
+                        $additionalServiceIds = $request->additional_services;
+                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
+
+                        foreach ($additionalServices as $addService) {
+                            if (isChauffeurService($addService)) {
+                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
+                            } else {
+                                $additionalServicesTotal += getServicePrice($addService, $petSize);
+                            }
                         }
                     }
                 }
@@ -810,22 +877,23 @@ class AppointmentController extends Controller
                 $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
             }
         }
+
         $appointment->status = 'checked_in';
-
-        $appointment->additional_service_ids = $request->filled('additional_services') ?
-            implode(',', $request->additional_services) : null;
-
+        $appointment->additional_service_ids = $request->filled('additional_services')
+            ? implode(',', $request->additional_services)
+            : null;
         $appointment->metadata = !empty($metadata) ? $metadata : null;
         $appointment->save();
-        appointment_audit_log($appointment->id, "Appointment is created.");
+
+        appointment_audit_log($appointment->id, 'Appointment is created.');
+
+        if ($assignedKennelId && isBoardingService($service)) {
+            Kennel::where('id', $assignedKennelId)->update(['status' => 'Out of Service']);
+        }
 
         if ($timeSlot && !is_null($timeSlot->capacity)) {
-            if ($timeSlot->booked_count < $timeSlot->capacity) {
-                $timeSlot->booked_count += 1;
-                if ($timeSlot->booked_count >= $timeSlot->capacity) {
-                    $timeSlot->status = 'full';
-                }
-            } else {
+            $timeSlot->booked_count += count($petIds);
+            if ($timeSlot->booked_count >= $timeSlot->capacity) {
                 $timeSlot->status = 'full';
             }
             $timeSlot->save();
@@ -834,7 +902,7 @@ class AppointmentController extends Controller
         if (!empty($usedSlotIds)) {
             $timeSlots = TimeSlot::whereIn('id', $usedSlotIds)->get();
             foreach ($timeSlots as $timeSlot) {
-                $timeSlot->booked_count += 1;
+                $timeSlot->booked_count += count($petIds);
                 if ($timeSlot->booked_count >= $timeSlot->capacity) {
                     $timeSlot->status = 'full';
                 }
@@ -843,7 +911,7 @@ class AppointmentController extends Controller
         }
 
         return redirect()->route('appointments')->with([
-            'message' => 'Appointment created successfully.',
+            'message' => count($petIds) > 1 ? 'Appointments created successfully.' : 'Appointment created successfully.',
             'status' => 'success'
         ]);
     }
@@ -941,10 +1009,18 @@ class AppointmentController extends Controller
         }
 
         $kennels = Kennel::where('status', 'In Service')->orderBy('name')->get();
-        $selectedKennel = Kennel::find($appointment->kennel_id);
-        $kennels = $kennels->merge([$selectedKennel])->unique('id')->values();
+        $selectedKennel = $appointment->kennel_id ? Kennel::find($appointment->kennel_id) : null;
+        if ($selectedKennel) {
+            $kennels = $kennels->push($selectedKennel)->unique('id')->values();
+        }
 
-        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'kennels'));
+        $rooms = Room::where('type', 'cat')->orderBy('name')->get();
+        $selectedRoom = $appointment->cat_room_id ? Room::find($appointment->cat_room_id) : null;
+        if ($selectedRoom) {
+            $rooms = $rooms->push($selectedRoom)->unique('id')->values();
+        }
+
+        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'kennels', 'rooms'));
     }
 
     public function update(Request $request)
@@ -956,6 +1032,7 @@ class AppointmentController extends Controller
             'service' => 'required|exists:services,id',
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
+            'room' => 'nullable|exists:rooms,id',
             'date' => 'nullable|date',
             'time_slot' => 'nullable',
             'additional_services' => 'nullable|array',
@@ -969,8 +1046,25 @@ class AppointmentController extends Controller
 
         $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
         $service = Service::with('category')->find($request->service);
+        $selectedPet = PetProfile::find($request->pet);
+        $selectedPetIsCat = strtolower((string) ($selectedPet->type ?? '')) === 'cat';
+        $selectedRoom = null;
 
-        if (isBoardingService($service) && !$request->filled('kennel')) {
+        if (isBoardingService($service) && $selectedPetIsCat) {
+            if (!$request->filled('room')) {
+                return back()->withErrors([
+                    'room' => 'Please select a cat room for the boarding appointment.'
+                ])->withInput();
+            }
+
+            $selectedRoom = Room::where('type', 'cat')->find($request->room);
+
+            if (!$selectedRoom) {
+                return back()->withErrors([
+                    'room' => 'The selected room is not available for cat boarding.'
+                ])->withInput();
+            }
+        } elseif (isBoardingService($service) && !$request->filled('kennel')) {
             return back()->withErrors([
                 'kennel' => 'Please select a kennel for the boarding appointment.'
             ])->withInput();
@@ -981,15 +1075,27 @@ class AppointmentController extends Controller
             ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
             : collect([]);
 
-        $requiresAdditionalServiceTimeSlot = isBoardingService($service)
-            && $selectedAdditionalServices->contains(function ($additionalService) {
-                return $this->serviceRequiresScheduledSlot($additionalService);
-            });
+        $requiresBoardingAdditionalService = isBoardingService($service);
+
+        if ($requiresBoardingAdditionalService && empty($selectedAdditionalServiceIds)) {
+            return back()->withErrors([
+                'additional_services' => 'Please select at least one additional service for the boarding appointment.'
+            ])->withInput();
+        }
+
+        $requiresAdditionalServiceTimeSlot = $requiresBoardingAdditionalService && $selectedAdditionalServices->isNotEmpty();
 
         if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
             return back()->withErrors([
                 'time_slot' => 'Please select a valid time slot for the additional service.'
             ])->withInput();
+        }
+
+        if ($selectedRoom) {
+            $metadata['room_id'] = $selectedRoom->id;
+            $metadata['room_name'] = $selectedRoom->name;
+        } else {
+            unset($metadata['room_id'], $metadata['room_name']);
         }
 
         if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
@@ -1009,10 +1115,16 @@ class AppointmentController extends Controller
         }
 
         $oldStatus = $appointment->status;
+        $oldKennelId = $appointment->kennel_id;
+        $newKennelId = isBoardingService($service) && !$selectedPetIsCat && $request->filled('kennel')
+            ? (int) $request->kennel
+            : null;
+
         $appointment->customer_id = $request->customer;
         $appointment->pet_id = $request->pet;
         $appointment->service_id = $request->service;
-        $appointment->kennel_id = $request->filled('kennel') ? $request->kennel : null;
+        $appointment->kennel_id = $newKennelId;
+        $appointment->cat_room_id = $selectedRoom?->id;
         $appointment->additional_service_ids = !empty($selectedAdditionalServiceIds)
             ? implode(',', $selectedAdditionalServiceIds)
             : null;
@@ -1058,13 +1170,39 @@ class AppointmentController extends Controller
             $newStatus = $request->status;
             if (in_array($newStatus, ['cancelled', 'no_show'])) {
                 $appointment->status = $newStatus;
-                Kennel::where('id', $request->kennel)->update(['status' => 'In Service']);
                 if ($oldStatus !== $newStatus) {
                     appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label($newStatus, $appointment->service) . ".");
                     $this->saveCancellationRecord($appointment, $newStatus);
                     $this->releaseTimeSlots($appointment);
                 }
             }
+        }
+
+        $isActiveBoardingAppointment = isBoardingService($service)
+            && !in_array($appointment->status, ['cancelled', 'no_show']);
+
+        if ($oldKennelId && $oldKennelId !== $newKennelId) {
+            $oldKennelStillAssigned = Appointment::where('id', '!=', $appointment->id)
+                ->where('kennel_id', $oldKennelId)
+                ->whereIn('status', ['checked_in', 'in_progress'])
+                ->whereHas('service.category', function ($query) {
+                    $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+                })
+                ->exists();
+
+            if (!$oldKennelStillAssigned) {
+                Kennel::where('id', $oldKennelId)->update(['status' => 'In Service']);
+            }
+        }
+
+        if ($newKennelId) {
+            Kennel::where('id', $newKennelId)->update([
+                'status' => $isActiveBoardingAppointment ? 'Out of Service' : 'In Service'
+            ]);
+        }
+
+        if (!$isActiveBoardingAppointment && $oldKennelId && $oldKennelId === $newKennelId) {
+            Kennel::where('id', $oldKennelId)->update(['status' => 'In Service']);
         }
 
         $appointment->save();
@@ -1089,6 +1227,8 @@ class AppointmentController extends Controller
 
         $appointment = Appointment::find($request->appointment_id);
         $appointmentId = $appointment->id;
+
+        Kennel::where('id', $appointment->kennel_id)->update(['status' => 'In Service']);
 
         $this->releaseTimeSlots($appointment);
 

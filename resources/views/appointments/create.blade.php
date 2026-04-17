@@ -54,9 +54,8 @@
             </select>
           </div>
           <div class="space-y-2">
-            <label class="fieldset-label" for="pet">Pet*</label>
-            <select class="select w-full" name="pet" id="pet">
-              <option value="" hidden selected>Choose a pet</option>
+            <label class="fieldset-label" for="pet">Pet(s)*</label>
+            <select class="select w-full" name="pet[]" id="pet" multiple>
             </select>
           </div>
         </div>
@@ -88,6 +87,15 @@
               <option value="" hidden selected>Choose a kennel</option>
               @foreach($kennels as $kennel)
                 <option value="{{ $kennel->id }}">{{ $kennel->name }}</option>
+              @endforeach
+            </select>
+          </div>
+          <div class="space-y-2 hidden" id="room_group">
+            <label class="fieldset-label" for="room">Room*</label>
+            <select class="select w-full" name="room" id="room">
+              <option value="" hidden selected>Choose a room</option>
+              @foreach($rooms as $room)
+                <option value="{{ $room->id }}">{{ $room->name }}</option>
               @endforeach
             </select>
           </div>
@@ -215,31 +223,36 @@
         }
       });
 
+      $('#pet').select2({
+        placeholder: "Choose pet(s)",
+        allowClear: true,
+        multiple: true,
+        width: '100%',
+        closeOnSelect: false
+      });
+
       $('#customer').on('select2:select', function (e) {
         const selectedData = e.params.data;
         const customerId = selectedData.id;
 
-        // Fetch pets for the selected customer
         $.ajax({
           url: '{{ url("/appointment/pets") }}/' + customerId,
           type: 'GET',
           dataType: 'json',
           success: function(pets) {
-            // Clear existing options
             $('#pet').empty();
-            $('#pet').append('<option value="" hidden selected>Choose a pet</option>');
 
-            // Populate the pet dropdown with new options
             $.each(pets, function(index, pet) {
-              $('#pet').append('<option value="' + pet.id + '">' + pet.name + '</option>');
+              const petType = pet.type || '';
+              $('#pet').append('<option value="' + pet.id + '" data-pet-type="' + petType + '">' + pet.name + '</option>');
             });
+
+            $('#pet').val([]).trigger('change');
           },
           error: function() {
             console.error('Failed to fetch pets for the selected customer.');
           }
         });
-
-        const serviceId = $('#service').val();
       });
 
       $('#time_slot').on('change', function() {
@@ -310,6 +323,17 @@
         allowClear: true
       });
 
+      $('#room').select2({
+        placeholder: "Choose a room",
+        width: '100%',
+        allowClear: true
+      });
+
+      $('#pet').on('change', function() {
+        updateBoardingLocationField();
+        handleAdditionalServiceTimeSlotState();
+      });
+
       $('#boarding_end_datetime').on('change', function() {
         handleAdditionalServiceTimeSlotState();
       });
@@ -352,6 +376,7 @@
       if (selectedServiceId) {
         checkServiceType(selectedServiceId);
         updateAdditionalServices(selectedServiceId);
+        updateBoardingLocationField();
         handleAdditionalServiceTimeSlotState();
       }
     });
@@ -381,11 +406,11 @@
       $('#additional_services_group').addClass('hidden');
       $('#boarding_start_group').addClass('hidden');
       $('#boarding_end_group').addClass('hidden');
-      $('#time_slot_group').addClass('hidden');
-      $('#kennel_group').addClass('hidden');
-      $('#staff_group').addClass('hidden');
+      $('#time_slot_group').removeClass('hidden');
+      $('#staff_group').removeClass('hidden');
 
       if (!serviceId) {
+        updateBoardingLocationField();
         return;
       }
 
@@ -395,9 +420,9 @@
         $('#additional_services_group').removeClass('hidden');
         $('#boarding_start_group').removeClass('hidden');
         $('#boarding_end_group').removeClass('hidden');
-        $('#kennel_group').removeClass('hidden');
-        $('#staff_group').removeClass('hidden');
       }
+
+      updateBoardingLocationField();
     }
 
     function updateAdditionalServices(selectedServiceId) {
@@ -447,6 +472,41 @@
       return selectedAdditionalServiceIds.length > 0 ? selectedAdditionalServiceIds[0] : null;
     }
 
+    function getSelectedPetIds() {
+      return $('#pet').val() || [];
+    }
+
+    function getPrimaryPetId() {
+      const petIds = getSelectedPetIds();
+      return petIds.length > 0 ? petIds[0] : '';
+    }
+
+    function shouldUseRoomForSelectedPets() {
+      const petTypes = $('#pet option:selected').map(function() {
+        return String($(this).data('pet-type') || '').trim().toLowerCase();
+      }).get().filter(function(type) {
+        return type !== '';
+      });
+
+      return petTypes.length > 0 && petTypes.every(function(type) {
+        return type === 'cat';
+      });
+    }
+
+    function updateBoardingLocationField() {
+      const useRoom = shouldUseRoomForSelectedPets();
+
+      if (useRoom) {
+        $('#kennel_group').addClass('hidden');
+        $('#room_group').removeClass('hidden');
+        $('#kennel').val('').trigger('change');
+      } else {
+        $('#kennel_group').removeClass('hidden');
+        $('#room_group').addClass('hidden');
+        $('#room').val('').trigger('change');
+      }
+    }
+
     function handleAdditionalServiceTimeSlotState() {
       const selectedServiceId = $('#service').val();
       const selectedService = window.servicesData.find(function(s) {
@@ -454,16 +514,16 @@
       });
       const isBoarding = selectedService && selectedService.category_name && selectedService.category_name.toLowerCase().includes('boarding');
 
+      $('#time_slot_group').removeClass('hidden');
+
       if (!isBoarding) {
-        $('#time_slot_group').addClass('hidden');
         $('#time_slot_group label').text('Start Time - End Time*');
-        $('#time_slot').empty().append('<option value="" hidden selected>Choose a time slot</option>');
         $('#time_slot_data').val('');
         return;
       }
 
       const additionalServiceId = getSelectedAdditionalServiceForTimeSlot();
-      const petId = $('#pet').val();
+      const petId = getPrimaryPetId();
       const boardingEndDateTime = $('#boarding_end_datetime').val();
       const pickupDate = boardingEndDateTime ? boardingEndDateTime.split('T')[0] : '';
       const pickupTime = boardingEndDateTime ? boardingEndDateTime.split('T')[1] : '';
@@ -628,7 +688,8 @@
       }
 
       const customer = $('#customer').val();
-      const pet = $('#pet').val();
+      const pet = getSelectedPetIds();
+      const primaryPetId = getPrimaryPetId();
       const service = $('#service').val();
       const date = $('#button_cally_target').text();
       const timeSlot = $('#time_slot').val();
@@ -638,9 +699,23 @@
       const boardingEnd = $('#boarding_end_datetime').val();
       const scheduledAdditionalServiceId = getSelectedAdditionalServiceForTimeSlot();
       const kennel = $('#kennel').val();
+      const room = $('#room').val();
+      const useRoom = shouldUseRoomForSelectedPets();
 
-      if (!customer || !pet || !service || !kennel) {
+      if (!customer || pet.length === 0 || !service) {
         $('#alert_message').text('Please fill in all required fields.');
+        alert_modal.showModal();
+        return;
+      }
+
+      if (isBoarding && useRoom && !room) {
+        $('#alert_message').text('Please select a cat room for the boarding appointment.');
+        alert_modal.showModal();
+        return;
+      }
+
+      if (isBoarding && !useRoom && !kennel) {
+        $('#alert_message').text('Please select a kennel for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
@@ -677,7 +752,7 @@
         url: '{{ route("get-validation-info") }}',
         method: 'POST',
         data: {
-          pet_id: pet,
+          pet_id: primaryPetId || null,
           service_id: service,
           additional_services: selectedAdditionalServices,
         },

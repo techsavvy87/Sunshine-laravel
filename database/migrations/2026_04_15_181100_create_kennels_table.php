@@ -17,7 +17,6 @@ return new class extends Migration
             $table->string('name');
             $table->string('description')->nullable();
             $table->enum('type', ['dog', 'cat'])->default('dog');
-            $table->unsignedInteger('capacity')->default(1);
             $table->enum('status', ['In Service', 'Out of Service', 'Cleaning'])->default('In Service');
             $table->timestamps();
         });

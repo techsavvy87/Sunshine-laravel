@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Room;
 use App\Models\Kennel;
+use App\Models\Appointment;
 
 class RoomController extends Controller
 {
@@ -32,13 +33,50 @@ class RoomController extends Controller
         $kennels = Kennel::orderBy('name')->get();
         $kennelLookup = $kennels->keyBy('id');
 
-        $rooms->getCollection()->transform(function ($room) use ($kennelLookup) {
+        $activeBoardingAppointments = Appointment::with(['pet', 'catRoom'])
+            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->orderBy('date', 'desc')
+            ->orderBy('start_time', 'desc')
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $activeBoardingAppointmentsByKennel = $activeBoardingAppointments
+            ->whereNotNull('kennel_id')
+            ->groupBy('kennel_id')
+            ->map(function ($appointments) {
+                return $appointments->flatMap(function ($appointment) {
+                    return $appointment->family_pets;
+                })->filter()->unique('id')->values();
+            });
+
+        $activeBoardingAppointmentsByRoom = $activeBoardingAppointments
+            ->whereNotNull('cat_room_id')
+            ->groupBy('cat_room_id')
+            ->map(function ($appointments) {
+                return $appointments->flatMap(function ($appointment) {
+                    return $appointment->family_pets;
+                })->filter()->unique('id')->values();
+            });
+
+        $rooms->getCollection()->transform(function ($room) use ($kennelLookup, $activeBoardingAppointmentsByKennel, $activeBoardingAppointmentsByRoom) {
             $room->assigned_kennels = collect($room->kennel_id_array)
                 ->map(fn ($id) => $kennelLookup->get((int) $id))
                 ->filter()
                 ->values();
 
             $room->assigned_kennel_names = $room->assigned_kennels->pluck('name')->implode(', ');
+            $room->current_room_pets = $activeBoardingAppointmentsByRoom->get((int) $room->id, collect());
+            $room->kennel_pet_assignments = $room->assigned_kennels->map(function ($kennel) use ($activeBoardingAppointmentsByKennel) {
+                $pets = $activeBoardingAppointmentsByKennel->get((int) $kennel->id, collect());
+
+                return (object) [
+                    'kennel' => $kennel,
+                    'pets' => $pets,
+                ];
+            })->values();
 
             return $room;
         });
@@ -69,8 +107,10 @@ class RoomController extends Controller
     public function editRoom($id)
     {
         $room = Room::findOrFail($id);
-        // Get all assigned kennel_ids from rooms
-        $assignedIds = Room::whereNotNull('kennel_ids')
+
+        // Get kennel assignments from other rooms only so current room selections remain visible.
+        $assignedIds = Room::where('id', '!=', $room->id)
+            ->whereNotNull('kennel_ids')
             ->pluck('kennel_ids')
             ->flatMap(function ($ids) {
                 return explode(',', $ids);
@@ -79,7 +119,6 @@ class RoomController extends Controller
             ->unique()
             ->toArray();
 
-        // Get only unassigned kennels
         $kennels = Kennel::whereNotIn('id', $assignedIds)
             ->orderBy('name')
             ->get();
@@ -132,18 +171,25 @@ class RoomController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:dog,cat,other',
-            'capacity' => 'required|integer|min:1',
             'status' => 'required|in:Available,Blocked,Maintenance',
             'kennel_ids' => 'nullable|array',
             'kennel_ids.*' => 'integer|exists:kennels,id',
             'temp_file' => 'nullable|string',
         ]);
 
+        $normalizedName = trim((string) $request->name);
+
+        if (Room::whereRaw('LOWER(name) = ?', [strtolower($normalizedName)])->exists()) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Room name already exists.'
+            ]);
+        }
+
         $room = new Room();
-        $room->name = $request->name;
+        $room->name = $normalizedName;
         $room->description = $request->description;
         $room->type = $request->type;
-        $room->capacity = $request->capacity;
         $room->status = $request->status;
         $room->kennel_ids = $this->normalizeKennelIds($request->input('kennel_ids', []));
 
@@ -179,7 +225,6 @@ class RoomController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:dog,cat,other',
-            'capacity' => 'required|integer|min:1',
             'status' => 'required|in:Available,Blocked,Maintenance',
             'kennel_ids' => 'nullable|array',
             'kennel_ids.*' => 'integer|exists:kennels,id',
@@ -188,11 +233,21 @@ class RoomController extends Controller
             'current_img' => 'nullable|string',
         ]);
 
+        $normalizedName = trim((string) $request->name);
+
+        if (Room::whereRaw('LOWER(name) = ?', [strtolower($normalizedName)])
+            ->where('id', '!=', $request->id)
+            ->exists()) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Room name already exists.'
+            ]);
+        }
+
         $room = Room::findOrFail($request->id);
-        $room->name = $request->name;
+        $room->name = $normalizedName;
         $room->description = $request->description;
         $room->type = $request->type;
-        $room->capacity = $request->capacity;
         $room->status = $request->status;
         $room->kennel_ids = $this->normalizeKennelIds($request->input('kennel_ids', []));
 

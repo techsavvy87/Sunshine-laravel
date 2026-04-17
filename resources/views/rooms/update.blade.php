@@ -69,7 +69,7 @@
           <div class="card-body">
             <div class="card-title">Basic Information</div>
             <div class="fieldset mt-2 grid grid-cols-1 gap-4 xl:grid-cols-4">
-              <div class="xl:col-span-2 space-y-2">
+              <div class="space-y-2">
                 <label class="fieldset-label" for="name">Room Name*</label>
                 <label class="input w-full focus:outline-0">
                   <input class="grow focus:outline-0" placeholder="e.g. Boarding Suite A" id="name" name="name" type="text" value="{{ old('name', $room->name) }}" />
@@ -84,12 +84,6 @@
                 </select>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="capacity">Capacity*</label>
-                <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. 2" id="capacity" name="capacity" type="number" min="1" step="1" value="{{ old('capacity', $room->capacity) }}" />
-                </label>
-              </div>
-              <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="status">Status*</label>
                 <select class="select w-full" name="status" id="status">
                   <option value="Available" {{ old('status', $room->status) === 'Available' ? 'selected' : '' }}>Available</option>
@@ -97,7 +91,7 @@
                   <option value="Maintenance" {{ old('status', $room->status) === 'Maintenance' ? 'selected' : '' }}>Maintenance</option>
                 </select>
               </div>
-              <div class="space-y-2 xl:col-span-2">
+              <div class="space-y-2">
                 <label class="fieldset-label" for="kennel_ids">Assigned Kennels</label>
                 <select class="select w-full" name="kennel_ids[]" id="kennel_ids" multiple>
                   @foreach ($kennels as $kennel)

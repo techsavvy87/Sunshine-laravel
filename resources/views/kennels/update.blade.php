@@ -44,33 +44,27 @@
               <div class="xl:col-span-2 space-y-2">
                 <label class="fieldset-label" for="name">Kennel Name*</label>
                 <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. Room A" id="name" name="name" type="text" value="{{ $kennel->name }}" />
+                  <input class="grow focus:outline-0" placeholder="e.g. Room A" id="name" name="name" type="text" value="{{ old('name', $kennel->name) }}" />
                 </label>
               </div>
               <div class="space-y-2">
                 <label class="fieldset-label" for="type">Type*</label>
                 <select class="select w-full" name="type" id="type">
-                  <option value="dog" {{ $kennel->type === 'dog' ? 'selected' : '' }}>Dog</option>
-                  <option value="cat" {{ $kennel->type === 'cat' ? 'selected' : '' }}>Cat</option>
+                  <option value="dog" {{ old('type', $kennel->type) === 'dog' ? 'selected' : '' }}>Dog</option>
+                  <option value="cat" {{ old('type', $kennel->type) === 'cat' ? 'selected' : '' }}>Cat</option>
                 </select>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="capacity">Capacity*</label>
-                <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. 1" id="capacity" name="capacity" type="number" min="1" step="1" value="{{ $kennel->capacity }}" />
-                </label>
-              </div>
-              <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="status">Status*</label>
                 <select class="select w-full" name="status" id="status">
-                  <option value="In Service" {{ $kennel->status === 'In Service' ? 'selected' : '' }}>In Service</option>
-                  <option value="Out of Service" {{ $kennel->status === 'Out of Service' ? 'selected' : '' }}>Out of Service</option>
-                  <option value="Cleaning" {{ $kennel->status === 'Cleaning' ? 'selected' : '' }}>Cleaning</option>
+                  <option value="In Service" {{ old('status', $kennel->status) === 'In Service' ? 'selected' : '' }}>In Service</option>
+                  <option value="Out of Service" {{ old('status', $kennel->status) === 'Out of Service' ? 'selected' : '' }}>Out of Service</option>
+                  <option value="Cleaning" {{ old('status', $kennel->status) === 'Cleaning' ? 'selected' : '' }}>Cleaning</option>
                 </select>
               </div>
               <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="description">Description</label>
-                <textarea class="textarea w-full min-h-24" placeholder="Description" name="description" id="description">{{ $kennel->description }}</textarea>
+                <textarea class="textarea w-full min-h-24" placeholder="Description" name="description" id="description">{{ old('description', $kennel->description) }}</textarea>
               </div>
             </div>
           </div>
@@ -98,6 +92,14 @@
 
   <script>
     FilePond.registerPlugin(FilePondPluginImagePreview);
+
+    const alert_modal = document.getElementById('alert_modal') || null;
+    const pageAlertMessage = @json(session('status') === 'fail' ? session('message') : ($errors->any() ? $errors->first() : ''));
+
+    if (pageAlertMessage && alert_modal) {
+      $('#alert_message').text(pageAlertMessage);
+      alert_modal.showModal();
+    }
 
     let initialFiles = [];
     @if($kennel->img)

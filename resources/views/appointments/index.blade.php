@@ -89,16 +89,31 @@
               <td>{{ $loop->iteration }}</td>
               <td>{{ $appointment->customer->profile->first_name }} {{ $appointment->customer->profile->last_name }}</td>
               <td>
-                <span>{{ $appointment->pet->name }}</span>
-                @if ($appointment->pet->rating === 'green')
-                <i class="fa-solid fa-star" style="color: lightseagreen"></i>
-                @elseif ($appointment->pet->rating === 'yellow')
-                <i class="fa-solid fa-star" style="color: gold"></i>
-                @elseif ($appointment->pet->rating === 'red')
-                <i class="fa-solid fa-star" style="color: tomato"></i>
+                @php
+                  $displayPets = $appointment->family_pets->isNotEmpty() ? $appointment->family_pets : collect([$appointment->pet])->filter();
+                @endphp
+                <div class="flex flex-col gap-1">
+                  @foreach ($displayPets as $displayPet)
+                    <div>
+                      <span>{{ $displayPet->name }}</span>
+                      @if ($displayPet->rating === 'green')
+                        <i class="fa-solid fa-star" style="color: lightseagreen"></i>
+                      @elseif ($displayPet->rating === 'yellow')
+                        <i class="fa-solid fa-star" style="color: gold"></i>
+                      @elseif ($displayPet->rating === 'red')
+                        <i class="fa-solid fa-star" style="color: tomato"></i>
+                      @endif
+                    </div>
+                  @endforeach
+                </div>
+              </td>
+              <td>
+                @if ($appointment->cat_room_id && $appointment->catRoom)
+                  {{ $appointment->catRoom->name }}
+                @else
+                  {{ optional($appointment->kennel)->name ?? '—' }}
                 @endif
               </td>
-              <td>{{ $appointment->kennel->name }}</td>
               <td>{{ $appointment->service->name }}</td>
               <td>{{ $appointment->staff_id ? ($appointment->staff->profile ? $appointment->staff->profile->first_name : $appointment->staff->name) : 'Unassigned' }}</td>
               <td style="text-align:center">

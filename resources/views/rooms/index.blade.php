@@ -41,9 +41,8 @@
               <th>No</th>
               <th>Image</th>
               <th>Name</th>
-              <th>Assigned Kennels</th>
+              <th>Assigned Kennels / Pets</th>
               <th>Type</th>
-              <th>Capacity</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
@@ -63,13 +62,41 @@
               </td>
               <td class="font-medium">{{ $room->name }}</td>
               <td>
+                @if (isset($room->current_room_pets) && $room->current_room_pets->isNotEmpty())
+                  <div class="mb-2 rounded-box bg-base-200/40 px-2 py-2 min-w-[260px] max-w-md">
+                    <div class="flex flex-col gap-2">
+                      @foreach ($room->current_room_pets as $pet)
+                        <div class="flex items-center gap-2">
+                          <img src="{{ empty($pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/' . $pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 size-8" />
+                          <span class="text-sm font-medium truncate">{{ $pet->name }}</span>
+                        </div>
+                      @endforeach
+                    </div>
+                  </div>
+                @endif
+
                 @if ($room->assigned_kennels->isNotEmpty())
-                <div class="flex flex-wrap gap-1 max-w-xs">
-                  @foreach ($room->assigned_kennels as $kennel)
-                  <span class="badge badge-soft badge-sm badge-neutral">{{ $kennel->name }}</span>
+                <div class="space-y-2 min-w-[260px] max-w-md">
+                  @foreach ($room->kennel_pet_assignments as $assignment)
+                  <div class="flex items-center gap-4 rounded-box bg-base-200/40 px-2 py-1.5">
+                    <div class="flex items-center gap-2">
+                      <span class="badge badge-soft badge-sm badge-neutral shrink-0">{{ $assignment->kennel->name }}</span>
+                    </div>
+
+                    @if (isset($assignment->pets) && $assignment->pets->isNotEmpty())
+                      <div class="flex flex-col gap-2">
+                        @foreach ($assignment->pets as $pet)
+                          <div class="flex items-center gap-2">
+                            <img src="{{ empty($pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/' . $pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 size-8" />
+                            <span class="text-sm font-medium truncate">{{ $pet->name }}</span>
+                          </div>
+                        @endforeach
+                      </div>
+                    @endif
+                  </div>
                   @endforeach
                 </div>
-                @else
+                @elseif (!isset($room->current_room_pets) || $room->current_room_pets->isEmpty())
                 <span class="text-sm text-base-content/60">No kennels assigned</span>
                 @endif
               </td>
@@ -83,7 +110,6 @@
                 @endphp
                 <span class="badge badge-soft badge-sm {{ $typeClass }}">{{ ucfirst($room->type) }}</span>
               </td>
-              <td>{{ $room->capacity }}</td>
               <td>
                 @php
                   $statusClass = match($room->status) {

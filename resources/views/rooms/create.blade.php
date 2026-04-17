@@ -66,7 +66,7 @@
           <div class="card-body">
             <div class="card-title">Basic Information</div>
             <div class="fieldset mt-2 grid grid-cols-1 gap-4 xl:grid-cols-4">
-              <div class="xl:col-span-2 space-y-2">
+              <div class="space-y-2">
                 <label class="fieldset-label" for="name">Room Name*</label>
                 <label class="input w-full focus:outline-0">
                   <input class="grow focus:outline-0" placeholder="e.g. Boarding Suite A" id="name" name="name" type="text" value="{{ old('name') }}" />
@@ -81,12 +81,6 @@
                 </select>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="capacity">Capacity*</label>
-                <label class="input w-full focus:outline-0">
-                  <input class="grow focus:outline-0" placeholder="e.g. 2" id="capacity" name="capacity" type="number" min="1" step="1" value="{{ old('capacity', 1) }}" />
-                </label>
-              </div>
-              <div class="space-y-2 xl:col-span-2">
                 <label class="fieldset-label" for="status">Status*</label>
                 <select class="select w-full" name="status" id="status">
                   <option value="Available" {{ old('status', 'Available') === 'Available' ? 'selected' : '' }}>Available</option>
@@ -94,7 +88,7 @@
                   <option value="Maintenance" {{ old('status') === 'Maintenance' ? 'selected' : '' }}>Maintenance</option>
                 </select>
               </div>
-              <div class="space-y-2 xl:col-span-2">
+              <div class="space-y-2">
                 <label class="fieldset-label" for="kennel_ids">Assigned Kennels</label>
                 <select class="select w-full" name="kennel_ids[]" id="kennel_ids" multiple>
                   @foreach ($kennels as $kennel)
@@ -134,6 +128,14 @@
   <script src="{{ asset('src/libs/select2/select2.min.js') }}"></script>
 
   <script>
+    const alert_modal = document.getElementById('alert_modal') || null;
+    const pageAlertMessage = @json(session('status') === 'fail' ? session('message') : ($errors->any() ? $errors->first() : ''));
+
+    if (pageAlertMessage && alert_modal) {
+      $('#alert_message').text(pageAlertMessage);
+      alert_modal.showModal();
+    }
+
     $(document).ready(function() {
       $('#kennel_ids').select2({
         placeholder: 'Select kennels',

@@ -21,7 +21,6 @@
   @include('layouts.alerts')
   <form action="{{ route('create-kennel') }}" method="POST" enctype="multipart/form-data" id="create_form">
     @csrf
-    <input type="hidden" name="capacity" value="{{ old('capacity', 1) }}" />
     <div class="grid grid-cols-1 gap-5 xl:grid-cols-4 mt-3">
       <div class="xl:col-span-1">
         <div class="card bg-base-100 shadow">

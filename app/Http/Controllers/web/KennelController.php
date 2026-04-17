@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Kennel;
+use App\Models\Appointment;
 
 class KennelController extends Controller
 {
@@ -37,6 +38,29 @@ class KennelController extends Controller
         }
 
         $kennels = $query->paginate($perPage)->withQueryString();
+
+        $activeBoardingAppointmentsByKennel = Appointment::with('pet')
+            ->whereNotNull('kennel_id')
+            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->orderBy('date', 'desc')
+            ->orderBy('start_time', 'desc')
+            ->orderBy('id', 'desc')
+            ->get()
+            ->groupBy('kennel_id')
+            ->map(function ($appointments) {
+                return $appointments->flatMap(function ($appointment) {
+                    return $appointment->family_pets;
+                })->filter()->unique('id')->values();
+            });
+
+        $kennels->getCollection()->transform(function ($kennel) use ($activeBoardingAppointmentsByKennel) {
+            $kennel->current_pets = $activeBoardingAppointmentsByKennel->get($kennel->id, collect());
+            $kennel->current_pet = $kennel->current_pets->first();
+            return $kennel;
+        });
 
         return view('kennels.index', compact('kennels', 'search', 'type', 'status'));
     }
@@ -98,7 +122,6 @@ class KennelController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:dog,cat',
-            'capacity' => 'nullable|integer|min:1',
             'status' => 'required|in:In Service,Out of Service,Cleaning',
             'temp_file' => 'nullable|string',
         ]);
@@ -116,7 +139,6 @@ class KennelController extends Controller
         $kennel->name = $normalizedName;
         $kennel->description = $request->description;
         $kennel->type = $request->type;
-        $kennel->capacity = $request->input('capacity', 1);
         $kennel->status = $request->status;
 
         if ($request->filled('temp_file')) {
@@ -151,7 +173,6 @@ class KennelController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
             'type' => 'required|in:dog,cat',
-            'capacity' => 'required|integer|min:1',
             'status' => 'required|in:In Service,Out of Service,Cleaning',
             'img_action' => 'required|in:keep,change,delete',
             'temp_file' => 'nullable|string',
@@ -170,10 +191,32 @@ class KennelController extends Controller
         }
 
         $kennel = Kennel::findOrFail($request->id);
+
+        $activeBoardingAppointment = Appointment::with('pet')
+            ->where('kennel_id', $kennel->id)
+            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->latest('id')
+            ->first();
+
+        if (
+            $kennel->status === 'Out of Service'
+            && $request->status !== $kennel->status
+            && $activeBoardingAppointment
+        ) {
+            $petName = $activeBoardingAppointment->pet->name ?? 'a pet';
+
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'This kennel cannot be updated because ' . $petName . ' is currently assigned through a boarding appointment.'
+            ]);
+        }
+
         $kennel->name = $normalizedName;
         $kennel->description = $request->description;
         $kennel->type = $request->type;
-        $kennel->capacity = $request->capacity;
         $kennel->status = $request->status;
 
         switch ($request->img_action) {

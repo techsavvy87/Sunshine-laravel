@@ -17,7 +17,6 @@ return new class extends Migration
             $table->string('name');
             $table->string('description')->nullable();
             $table->string('kennel_ids')->nullable(); // Store associated kennel IDs as a comma-separated string
-            $table->unsignedInteger('capacity')->default(1);
             $table->enum('type', ['dog', 'cat', 'other'])->default('dog');
             $table->enum('status', ['Available', 'Blocked', 'Maintenance'])->default('Available');
             $table->timestamps();

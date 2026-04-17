@@ -40,8 +40,8 @@
               <th>No</th>
               <th>Image</th>
               <th>Name</th>
+              <th>Assigned Pet</th>
               <th>Type</th>
-              <th>Capacity</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
@@ -61,12 +61,23 @@
               </td>
               <td>{{ $kennel->name }}</td>
               <td>
+                @if (isset($kennel->current_pets) && $kennel->current_pets->isNotEmpty())
+                  <div class="flex flex-col gap-2">
+                    @foreach ($kennel->current_pets as $pet)
+                      <div class="flex items-center gap-2">
+                        <img src="{{ empty($pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/' . $pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 size-8">
+                        <span>{{ $pet->name }}</span>
+                      </div>
+                    @endforeach
+                  </div>
+                @endif
+              </td>
+              <td>
                 @php
                   $typeClass = $kennel->type === 'dog' ? 'badge-info' : 'badge-secondary';
                 @endphp
                 <span class="badge badge-soft badge-sm {{ $typeClass }}">{{ ucfirst($kennel->type) }}</span>
               </td>
-              <td>{{ $kennel->capacity }}</td>
               <td>
                 @php
                   $statusClass = match($kennel->status) {

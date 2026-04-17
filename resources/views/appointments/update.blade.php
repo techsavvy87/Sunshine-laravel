@@ -107,12 +107,21 @@
               value="{{ $appointment->end_date ? $appointment->end_date . 'T' . \Carbon\Carbon::parse($appointment->end_time)->format('H:i') : '' }}"
             />
           </div>
-          <div class="space-y-2" id="kennel_group">
+          <div class="space-y-2 {{ $appointment->cat_room_id ? 'hidden' : '' }}" id="kennel_group">
             <label class="fieldset-label" for="kennel">Kennel*</label>
             <select class="select w-full" name="kennel" id="kennel">
               <option value="" hidden selected>Choose a kennel</option>
               @foreach($kennels as $kennel)
                 <option value="{{ $kennel->id }}" {{ (string)($appointment->kennel_id ?? '') === (string)$kennel->id ? 'selected' : '' }}>{{ $kennel->name }}</option>
+              @endforeach
+            </select>
+          </div>
+          <div class="space-y-2 {{ $appointment->cat_room_id ? '' : 'hidden' }}" id="room_group">
+            <label class="fieldset-label" for="room">Room*</label>
+            <select class="select w-full" name="room" id="room">
+              <option value="" hidden selected>Choose a room</option>
+              @foreach($rooms as $room)
+                <option value="{{ $room->id }}" {{ (string)($appointment->cat_room_id ?? '') === (string)$room->id ? 'selected' : '' }}>{{ $room->name }}</option>
               @endforeach
             </select>
           </div>
@@ -348,6 +357,12 @@
         allowClear: true
       });
 
+      $('#room').select2({
+        placeholder: "Choose a room",
+        width: '100%',
+        allowClear: true
+      });
+
       window.originalAdditionalOptions = $('#additional_services').html();
 
       // Define servicesData globally so it's accessible to all functions
@@ -386,6 +401,7 @@
       });
 
       $('#pet').on('change', function() {
+        updateBoardingLocationField();
         if (isBoardingSelectedService($('#service').val())) {
           handleAdditionalServiceTimeSlotState();
         }
@@ -405,6 +421,7 @@
       const selectedServiceId = $('#service').val();
       if (selectedServiceId) {
         updateAdditionalServices(selectedServiceId, true);
+        updateBoardingLocationField();
         handleAdditionalServiceTimeSlotState();
       }
     });
@@ -424,8 +441,11 @@
 
           $.each(pets, function(index, pet) {
             const selected = String(pet.id) === String(selectedPetId) ? ' selected' : '';
-            $('#pet').append('<option value="' + pet.id + '"' + selected + '>' + pet.name + '</option>');
+            const petType = String(pet.type || '');
+            $('#pet').append('<option value="' + pet.id + '" data-pet-type="' + petType + '"' + selected + '>' + pet.name + '</option>');
           });
+
+          updateBoardingLocationField();
 
           if (isBoardingSelectedService($('#service').val())) {
             handleAdditionalServiceTimeSlotState();
@@ -447,6 +467,29 @@
       return !!(service && service.category_name && service.category_name.toLowerCase().includes('boarding'));
     }
 
+    function shouldUseRoomForSelectedPet() {
+      const petType = String($('#pet option:selected').data('pet-type') || '').trim().toLowerCase();
+      return petType === 'cat';
+    }
+
+    function updateBoardingLocationField() {
+      if (!isBoardingSelectedService($('#service').val())) {
+        $('#kennel_group').removeClass('hidden');
+        $('#room_group').addClass('hidden');
+        return;
+      }
+
+      if (shouldUseRoomForSelectedPet()) {
+        $('#kennel_group').addClass('hidden');
+        $('#room_group').removeClass('hidden');
+        $('#kennel').val('').trigger('change');
+      } else {
+        $('#kennel_group').removeClass('hidden');
+        $('#room_group').addClass('hidden');
+        $('#room').val('').trigger('change');
+      }
+    }
+
     function changeService(ele) {
       const serviceId = $(ele).val();
       const petId = $('#pet').val();
@@ -456,6 +499,7 @@
       $('#time_slot_data').val('');
 
       updateAdditionalServices(serviceId, false);
+      updateBoardingLocationField();
 
       if (!isBoardingSelectedService(serviceId) && appointmentDate && petId) {
         populateTimeSlots(serviceId, appointmentDate, petId);
@@ -704,8 +748,9 @@
       const isBoarding = $('#boarding_start_group').is(':visible');
       const boardingStart = $('#boarding_start_datetime').val();
       const boardingEnd = $('#boarding_end_datetime').val();
-      const scheduledAdditionalServiceId = getSelectedAdditionalServiceForTimeSlot();
       const kennel = $('#kennel').val();
+      const room = $('#room').val();
+      const useRoom = shouldUseRoomForSelectedPet();
 
       if (!customer || !pet || !service) {
         $('#alert_message').text('Please fill in all required fields.');
@@ -713,13 +758,25 @@
         return;
       }
 
-      if (isBoarding && !kennel) {
+      if (isBoarding && useRoom && !room) {
+        $('#alert_message').text('Please select a cat room for the boarding appointment.');
+        alert_modal.showModal();
+        return;
+      }
+
+      if (isBoarding && !useRoom && !kennel) {
         $('#alert_message').text('Please select a kennel for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && scheduledAdditionalServiceId && !timeSlot) {
+      if (isBoarding && selectedAdditionalServices.length === 0) {
+        $('#alert_message').text('Please select at least one additional service.');
+        alert_modal.showModal();
+        return;
+      }
+
+      if (isBoarding && !timeSlot) {
         $('#alert_message').text('Please select a valid time slot for the additional service.');
         alert_modal.showModal();
         return;
