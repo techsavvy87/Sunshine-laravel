@@ -88,7 +88,7 @@
                   <option value="Maintenance" {{ old('status') === 'Maintenance' ? 'selected' : '' }}>Maintenance</option>
                 </select>
               </div>
-              <div class="space-y-2">
+              <div id="kennel_ids_wrapper" class="space-y-2 {{ old('type') === 'cat' ? 'hidden' : '' }}">
                 <label class="fieldset-label" for="kennel_ids">Assigned Kennels</label>
                 <select class="select w-full" name="kennel_ids[]" id="kennel_ids" multiple>
                   @foreach ($kennels as $kennel)
@@ -144,6 +144,15 @@
         width: '100%',
         closeOnSelect: false
       });
+
+      const toggleKennelField = () => {
+        const isCat = $('#type').val() === 'cat';
+        $('#kennel_ids_wrapper').toggleClass('hidden', isCat);
+        $('#kennel_ids').prop('disabled', isCat).trigger('change.select2');
+      };
+
+      $('#type').on('change', toggleKennelField);
+      toggleKennelField();
     });
 
     FilePond.registerPlugin(FilePondPluginImagePreview);

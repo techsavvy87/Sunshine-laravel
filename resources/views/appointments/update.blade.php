@@ -69,9 +69,8 @@
             </select>
           </div>
           <div class="space-y-2">
-            <label class="fieldset-label" for="pet">Pet*</label>
-            <select class="select w-full" name="pet" id="pet">
-              <option value="" hidden selected>Choose a pet</option>
+            <label class="fieldset-label" for="pet">Pet(s)*</label>
+            <select class="select w-full" name="pet[]" id="pet" multiple>
             </select>
           </div>
         </div>
@@ -274,6 +273,14 @@
         }
       });
 
+      $('#pet').select2({
+        placeholder: "Choose pet(s)",
+        allowClear: true,
+        multiple: true,
+        width: '100%',
+        closeOnSelect: false
+      });
+
       // Add the customer option if not present
       var customerText = "{{ $appointment->customer->profile->first_name ?? '' }} {{ $appointment->customer->profile->last_name ?? '' }} ({{ $appointment->customer->email ?? '' }} | {{ $appointment->customer->profile->phone_number_1 ?? '' }})";
       var customerOption = new Option(customerText, "{{ $appointment->customer_id }}", true, true);
@@ -285,8 +292,8 @@
       });
 
       const currentCustomerId = "{{ $appointment->customer_id }}";
-      const currentPetId = "{{ $appointment->pet_id }}";
-      loadPets(currentCustomerId, currentPetId);
+      const currentPetIds = @json($appointment->family_pet_ids);
+      loadPets(currentCustomerId, currentPetIds);
 
       @if(!isPackageService($appointment->service))
       $('#staff').select2({
@@ -426,10 +433,26 @@
       }
     });
 
-    function loadPets(customerId, selectedPetId = '') {
+    function normalizeSelectedPetIds(selectedPetIds = []) {
+      if (Array.isArray(selectedPetIds)) {
+        return selectedPetIds.map(function(id) {
+          return String(id);
+        });
+      }
+
+      if (selectedPetIds) {
+        return [String(selectedPetIds)];
+      }
+
+      return [];
+    }
+
+    function loadPets(customerId, selectedPetIds = []) {
       if (!customerId) {
         return;
       }
+
+      const normalizedPetIds = normalizeSelectedPetIds(selectedPetIds);
 
       $.ajax({
         url: '{{ url("/appointment/pets") }}/' + customerId,
@@ -437,20 +460,21 @@
         dataType: 'json',
         success: function(pets) {
           $('#pet').empty();
-          $('#pet').append('<option value="" hidden selected>Choose a pet</option>');
 
           $.each(pets, function(index, pet) {
-            const selected = String(pet.id) === String(selectedPetId) ? ' selected' : '';
+            const selected = normalizedPetIds.includes(String(pet.id)) ? ' selected' : '';
             const petType = String(pet.type || '');
             $('#pet').append('<option value="' + pet.id + '" data-pet-type="' + petType + '"' + selected + '>' + pet.name + '</option>');
           });
 
+          $('#pet').val(normalizedPetIds).trigger('change');
           updateBoardingLocationField();
 
+          const primaryPetId = getPrimaryPetId();
           if (isBoardingSelectedService($('#service').val())) {
             handleAdditionalServiceTimeSlotState();
-          } else if (appointmentDate && $('#pet').val()) {
-            populateTimeSlots($('#service').val(), appointmentDate, $('#pet').val());
+          } else if (appointmentDate && primaryPetId) {
+            populateTimeSlots($('#service').val(), appointmentDate, primaryPetId);
           }
         },
         error: function() {
@@ -467,9 +491,25 @@
       return !!(service && service.category_name && service.category_name.toLowerCase().includes('boarding'));
     }
 
-    function shouldUseRoomForSelectedPet() {
-      const petType = String($('#pet option:selected').data('pet-type') || '').trim().toLowerCase();
-      return petType === 'cat';
+    function getSelectedPetIds() {
+      return $('#pet').val() || [];
+    }
+
+    function getPrimaryPetId() {
+      const petIds = getSelectedPetIds();
+      return petIds.length > 0 ? petIds[0] : '';
+    }
+
+    function shouldUseRoomForSelectedPets() {
+      const petTypes = $('#pet option:selected').map(function() {
+        return String($(this).data('pet-type') || '').trim().toLowerCase();
+      }).get().filter(function(type) {
+        return type !== '';
+      });
+
+      return petTypes.length > 0 && petTypes.every(function(type) {
+        return type === 'cat';
+      });
     }
 
     function updateBoardingLocationField() {
@@ -479,7 +519,7 @@
         return;
       }
 
-      if (shouldUseRoomForSelectedPet()) {
+      if (shouldUseRoomForSelectedPets()) {
         $('#kennel_group').addClass('hidden');
         $('#room_group').removeClass('hidden');
         $('#kennel').val('').trigger('change');
@@ -492,7 +532,7 @@
 
     function changeService(ele) {
       const serviceId = $(ele).val();
-      const petId = $('#pet').val();
+      const petId = getPrimaryPetId();
 
       $('#time_slot').empty();
       $('#time_slot').append('<option value="" hidden selected>Choose a time slot</option>');
@@ -552,15 +592,16 @@
       if (!isBoardingSelectedService(serviceId)) {
         $('#time_slot_group').removeClass('hidden');
 
-        if (appointmentDate && $('#pet').val()) {
-          populateTimeSlots(serviceId, appointmentDate, $('#pet').val());
+        const primaryPetId = getPrimaryPetId();
+        if (appointmentDate && primaryPetId) {
+          populateTimeSlots(serviceId, appointmentDate, primaryPetId);
         }
         return;
       }
 
       const savedAdditionalServiceId = "{{ $appointment->metadata['additional_service_time_slot_service_id'] ?? '' }}";
       const additionalServiceId = getSelectedAdditionalServiceForTimeSlot() || savedAdditionalServiceId;
-      const petId = $('#pet').val();
+      const petId = getPrimaryPetId();
       const boardingEndDateTime = $('#boarding_end_datetime').val();
       const pickupDate = boardingEndDateTime ? boardingEndDateTime.split('T')[0] : '';
       const pickupTime = boardingEndDateTime ? boardingEndDateTime.split('T')[1] : '';
@@ -740,7 +781,8 @@
 
     function proceedWithFormSubmission() {
       const customer = $('#customer').val();
-      const pet = $('#pet').val();
+      const pet = getSelectedPetIds();
+      const primaryPetId = getPrimaryPetId();
       const service = $('#service').val();
       const timeSlot = $('#time_slot').val();
       const selectedAdditionalServices = $('#additional_services').val() || [];
@@ -750,9 +792,9 @@
       const boardingEnd = $('#boarding_end_datetime').val();
       const kennel = $('#kennel').val();
       const room = $('#room').val();
-      const useRoom = shouldUseRoomForSelectedPet();
+      const useRoom = shouldUseRoomForSelectedPets();
 
-      if (!customer || !pet || !service) {
+      if (!customer || pet.length === 0 || !service) {
         $('#alert_message').text('Please fill in all required fields.');
         alert_modal.showModal();
         return;
@@ -800,7 +842,7 @@
         url: '{{ route("get-validation-info") }}',
         method: 'POST',
         data: {
-          pet_id: pet,
+          pet_id: primaryPetId || null,
           service_id: service,
           additional_services: selectedAdditionalServices,
         },

@@ -623,32 +623,6 @@
       });
     }
 
-    function showAddressValidationErrors(ownerAddressValid, facilityAddressValid) {
-      const messages = [];
-
-      if (!ownerAddressValid) {
-        messages.push('<li>Owner address is invalid</li>');
-      }
-
-      if (!facilityAddressValid) {
-        messages.push('<li>Facility address is invalid</li>');
-      }
-
-      if (messages.length === 0) {
-        return;
-      }
-
-      const html = `
-        <div class="text-left">
-          <p>Please address the following issues before creating the appointment:</p>
-          <ul style="list-style: none; font-size: 14px; padding-top: 6px;">${messages.join('')}</ul>
-        </div>
-      `;
-
-      $('#alert_message').html(html);
-      alert_modal.showModal();
-    }
-
     function setSaveButtonLoading(isLoading) {
       const $saveButton = $('#save_appointment_btn');
       if ($saveButton.length === 0) {
@@ -763,11 +737,6 @@
         success: function(response) {
           setSaveButtonLoading(false);
 
-          if (chauffeurSelected && (!response.owner_address_valid || !response.facility_address_valid)) {
-            showAddressValidationErrors(response.owner_address_valid, response.facility_address_valid);
-            return;
-          }
-
           let validationMessage = '';
           if (!response.owner_status) {
             validationMessage += `<li>Pet owner's profile is inactive.</li>`;
@@ -776,6 +745,12 @@
             validationMessage += '<li>Pet vaccination is expired.</li>';
           } else if (!response.vaccine_status) {
             validationMessage += '<li>Pet vaccination records is not approved.</li>';
+          }
+          if (!response.questionnaire_status) {
+            validationMessage += '<li>Pet questionnaire is not approved.</li>';
+          }
+          if (!response.available_status) {
+            validationMessage += '<li>Online booking is currently limited due to high demand.</li>';
           }
           if (validationMessage) {
             validationMessage = `Please address the following issues before creating the appointment:<br>

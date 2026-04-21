@@ -571,6 +571,10 @@ class AppointmentController extends Controller
             'additional_services.*' => 'exists:services,id',
         ]);
 
+        $capacity  = Kennel::count() + Room::where('type', '!=', 'dog')->count();
+        $occupied = Kennel::where('status', 'Out of Service')->count() + Room::where('status', '!=', 'Available')->where('type', '!=', 'dog')->count();
+        $available_status = $occupied / $capacity < 0.5? true : false;
+
         $pet = PetProfile::find($request->pet_id);
         $service = Service::find($request->service_id);
         $additionalServiceIds = collect($request->input('additional_services', []))
@@ -593,15 +597,6 @@ class AppointmentController extends Controller
             });
         }
 
-        if ($chauffeurSelectedInAdditionalServices) {
-            $ownerAddress = buildOwnerAddressFromProfile($pet?->owner?->profile);
-            $ownerAddressValid = !empty($ownerAddress) && geocodeChauffeurAddress($ownerAddress) !== null;
-
-            $facility = \App\Models\FacilityAddress::query()->first();
-            $facilityAddress = buildFacilityAddressFromModel($facility);
-            $facilityAddressValid = !empty($facilityAddress) && geocodeChauffeurAddress($facilityAddress) !== null;
-        }
-
         // Pet vaccine status check
         if ($pet->vaccine_status === 'approved') {
             $vaccineStatus = 'approved';
@@ -611,55 +606,12 @@ class AppointmentController extends Controller
             $vaccineStatus = false;
         }
 
-        $questionnaireStatus = true;
-
-        if (isPackageService($service) && $request->filled('package_id')) {
-            $package = Package::find($request->package_id);
-            if ($package && $package->service_ids) {
-                $serviceIds = array_map('trim', explode(',', $package->service_ids));
-                $packageServices = Service::whereIn('id', $serviceIds)->with('category')->get();
-
-                $requiredCategories = [];
-
-                foreach ($packageServices as $packageService) {
-                    if (isGroupClassService($packageService)) {
-                        continue;
-                    }
-
-                    if ($packageService->category) {
-                        $requiredCategories[$packageService->category->id] = $packageService->category;
-                    }
-                }
-
-                foreach ($requiredCategories as $category) {
-                    $categoryQuestionnaire = Questionnaire::where('pet_id', $pet->id)
-                        ->where('user_id', $pet->user_id)
-                        ->where('service_category_id', $category->id)
-                        ->orderBy('created_at', 'desc')
-                        ->first();
-                    if (!$categoryQuestionnaire || $categoryQuestionnaire->status !== 'approved') {
-                        $questionnaireStatus = false;
-                    }
-                }
-            }
-        } else if (isGroomingService($service) || isAlaCarteService($service)) {
-            $serviceCategory = ServiceCategory::whereRaw('LOWER(name) LIKE ?', ['%groom%'])->first();
-            $questionnaire = Questionnaire::where('pet_id', $pet->id)
-                ->where('user_id', $pet->user_id)
-                ->where('service_category_id', $serviceCategory->id)
-                ->orderBy('created_at', 'desc')
-                ->first();
-            $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
-        } else if (isGroupClassService($service)) {
-            $questionnaireStatus = true;
-        } else {
-            $questionnaire = Questionnaire::where('pet_id', $pet->id)
-                ->where('user_id', $pet->user_id)
-                ->where('service_category_id', $service->category->id)
-                ->orderBy('created_at', 'desc')
-                ->first();
-            $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
-        }
+        $questionnaire = Questionnaire::where('pet_id', $pet->id)
+            ->where('user_id', $pet->user_id)
+            ->where('service_category_id', $service->category->id)
+            ->orderBy('created_at', 'desc')
+            ->first();
+        $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
 
         // Pet Owner profile status
         $ownerStatus = (bool)$pet->owner->status;
@@ -668,9 +620,7 @@ class AppointmentController extends Controller
             'owner_status' => $ownerStatus,
             'vaccine_status' => $vaccineStatus,
             'questionnaire_status' => $questionnaireStatus,
-            'chauffeur_selected' => $chauffeurSelectedInAdditionalServices,
-            'owner_address_valid' => $ownerAddressValid,
-            'facility_address_valid' => $facilityAddressValid,
+            'available_status' => $available_status,
         ]);
     }
 
@@ -891,6 +841,10 @@ class AppointmentController extends Controller
             Kennel::where('id', $assignedKennelId)->update(['status' => 'Out of Service']);
         }
 
+        if ($selectedRoom && isBoardingService($service)) {
+            $this->markCatRoomOutOfService($selectedRoom->id);
+        }
+
         if ($timeSlot && !is_null($timeSlot->capacity)) {
             $timeSlot->booked_count += count($petIds);
             if ($timeSlot->booked_count >= $timeSlot->capacity) {
@@ -1014,7 +968,10 @@ class AppointmentController extends Controller
             $kennels = $kennels->push($selectedKennel)->unique('id')->values();
         }
 
-        $rooms = Room::where('type', 'cat')->orderBy('name')->get();
+        $rooms = Room::where('type', 'cat')
+            ->where('status', 'Available')
+            ->orderBy('name')
+            ->get();
         $selectedRoom = $appointment->cat_room_id ? Room::find($appointment->cat_room_id) : null;
         if ($selectedRoom) {
             $rooms = $rooms->push($selectedRoom)->unique('id')->values();
@@ -1028,7 +985,8 @@ class AppointmentController extends Controller
         $request->validate([
             'appointment_id' => 'required|exists:appointments,id',
             'customer' => 'required|exists:users,id',
-            'pet' => 'required|exists:pet_profiles,id',
+            'pet' => 'required|array|min:1',
+            'pet.*' => 'exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
@@ -1044,20 +1002,32 @@ class AppointmentController extends Controller
             ? TimeSlot::with('service.category')->find($request->time_slot)
             : null;
 
+        $petIds = collect($request->input('pet', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
         $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
         $service = Service::with('category')->find($request->service);
-        $selectedPet = PetProfile::find($request->pet);
-        $selectedPetIsCat = strtolower((string) ($selectedPet->type ?? '')) === 'cat';
+        $selectedPets = PetProfile::whereIn('id', $petIds)->get();
+        $selectedPetsAreCats = $selectedPets->isNotEmpty()
+            && $selectedPets->every(fn ($pet) => strtolower((string) ($pet->type ?? '')) === 'cat');
         $selectedRoom = null;
 
-        if (isBoardingService($service) && $selectedPetIsCat) {
+        if (isBoardingService($service) && $selectedPetsAreCats) {
             if (!$request->filled('room')) {
                 return back()->withErrors([
                     'room' => 'Please select a cat room for the boarding appointment.'
                 ])->withInput();
             }
 
-            $selectedRoom = Room::where('type', 'cat')->find($request->room);
+            $selectedRoom = Room::where('type', 'cat')
+                ->where(function ($query) use ($appointment) {
+                    $query->where('status', 'Available')
+                        ->orWhere('id', $appointment->cat_room_id);
+                })
+                ->find($request->room);
 
             if (!$selectedRoom) {
                 return back()->withErrors([
@@ -1068,6 +1038,14 @@ class AppointmentController extends Controller
             return back()->withErrors([
                 'kennel' => 'Please select a kennel for the boarding appointment.'
             ])->withInput();
+        }
+
+        $primaryPetId = $petIds[0] ?? null;
+
+        if (count($petIds) > 1) {
+            $metadata['family_pet_ids'] = $petIds;
+        } else {
+            unset($metadata['family_pet_ids']);
         }
 
         $selectedAdditionalServiceIds = $request->input('additional_services', []);
@@ -1116,15 +1094,19 @@ class AppointmentController extends Controller
 
         $oldStatus = $appointment->status;
         $oldKennelId = $appointment->kennel_id;
-        $newKennelId = isBoardingService($service) && !$selectedPetIsCat && $request->filled('kennel')
+        $oldRoomId = $appointment->cat_room_id;
+        $newKennelId = isBoardingService($service) && !$selectedPetsAreCats && $request->filled('kennel')
             ? (int) $request->kennel
+            : null;
+        $newRoomId = isBoardingService($service) && $selectedPetsAreCats && $selectedRoom
+            ? (int) $selectedRoom->id
             : null;
 
         $appointment->customer_id = $request->customer;
-        $appointment->pet_id = $request->pet;
+        $appointment->pet_id = $primaryPetId;
         $appointment->service_id = $request->service;
         $appointment->kennel_id = $newKennelId;
-        $appointment->cat_room_id = $selectedRoom?->id;
+        $appointment->cat_room_id = $newRoomId;
         $appointment->additional_service_ids = !empty($selectedAdditionalServiceIds)
             ? implode(',', $selectedAdditionalServiceIds)
             : null;
@@ -1205,6 +1187,18 @@ class AppointmentController extends Controller
             Kennel::where('id', $oldKennelId)->update(['status' => 'In Service']);
         }
 
+        if ($oldRoomId && $oldRoomId !== $newRoomId) {
+            $this->releaseCatRoomIfUnused($oldRoomId, $appointment->id);
+        }
+
+        if ($newRoomId && $isActiveBoardingAppointment) {
+            $this->markCatRoomOutOfService($newRoomId);
+        }
+
+        if (!$isActiveBoardingAppointment && $oldRoomId && $oldRoomId === $newRoomId) {
+            $this->releaseCatRoomIfUnused($oldRoomId, $appointment->id);
+        }
+
         $appointment->save();
         if ($oldStatus !== $appointment->status && !in_array($appointment->status, ['cancelled', 'no_show'])) {
             $label = $appointment->status === 'checked_in' ? "Appointment is created." : "Appointment status changed to " . appointment_status_label($appointment->status, $appointment->service) . ".";
@@ -1229,6 +1223,7 @@ class AppointmentController extends Controller
         $appointmentId = $appointment->id;
 
         Kennel::where('id', $appointment->kennel_id)->update(['status' => 'In Service']);
+        $this->releaseCatRoomIfUnused($appointment->cat_room_id, $appointment->id);
 
         $this->releaseTimeSlots($appointment);
 
@@ -2419,6 +2414,38 @@ class AppointmentController extends Controller
         }
     }
 
+    private function markCatRoomOutOfService(?int $roomId): void
+    {
+        if (!$roomId) {
+            return;
+        }
+
+        Room::where('id', $roomId)->update(['status' => 'Out of Service']);
+    }
+
+    private function releaseCatRoomIfUnused(?int $roomId, ?int $excludingAppointmentId = null): void
+    {
+        if (!$roomId) {
+            return;
+        }
+
+        $roomStillAssigned = Appointment::where('cat_room_id', $roomId)
+            ->when($excludingAppointmentId, function ($query) use ($excludingAppointmentId) {
+                $query->where('id', '!=', $excludingAppointmentId);
+            })
+            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->exists();
+
+        if (!$roomStillAssigned) {
+            Room::where('id', $roomId)
+                ->where('status', 'Out of Service')
+                ->update(['status' => 'Available']);
+        }
+    }
+
     public function updateStatus(Request $request, $id)
     {
         $request->validate([
@@ -2436,6 +2463,9 @@ class AppointmentController extends Controller
         if (in_array($newStatus, ['cancelled', 'no_show'])) {
             $this->saveCancellationRecord($appointment, $newStatus);
             $this->releaseTimeSlots($appointment);
+            $this->releaseCatRoomIfUnused($appointment->cat_room_id, $appointment->id);
+        } elseif ($newStatus === 'checked_in' && isBoardingService($appointment->service)) {
+            $this->markCatRoomOutOfService($appointment->cat_room_id);
         }
 
         return redirect()->route('archives')->with([
