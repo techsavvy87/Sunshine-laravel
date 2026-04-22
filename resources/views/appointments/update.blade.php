@@ -519,6 +519,18 @@
         return;
       }
 
+      const selectedPetIds = getSelectedPetIds();
+      if (selectedPetIds.length === 0) {
+        if ($('#room').val()) {
+          $('#kennel_group').addClass('hidden');
+          $('#room_group').removeClass('hidden');
+        } else {
+          $('#kennel_group').removeClass('hidden');
+          $('#room_group').addClass('hidden');
+        }
+        return;
+      }
+
       if (shouldUseRoomForSelectedPets()) {
         $('#kennel_group').addClass('hidden');
         $('#room_group').removeClass('hidden');

@@ -1351,7 +1351,7 @@
                     <div>
                       <p class="font-medium mb-1">Confirm pickup date and time:</p>
                       <input type="datetime-local" id="boarding_pickup_datetime" class="input input-bordered w-full input-sm"
-                        value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['pickup_datetime']) ? date('Y-m-d\TH:i', strtotime($checkedIn->flows['pickup_datetime'])) : '' }}" />
+                        value="{{ \Carbon\Carbon::parse($appointment->end_date . ' ' . $appointment->end_time)->format('Y-m-d\TH:i') }}" />
                     </div>
                     <div>
                       <p class="font-medium mb-1">Trip location:</p>
@@ -1522,7 +1522,6 @@
                           </div>
                         </div>
                       </div>
-
                     </div>
                 </div>
 
@@ -1554,6 +1553,14 @@
                           <span class="text-sm">Kennel</span>
                         </label>
                       </div>
+                      @if($appointment->pet->age >= 16)
+                      <div class="flex items-center gap-2 mb-2 space-y-1 ms-1">
+                        <label class="flex items-center gap-2">
+                          <input type="checkbox" class="checkbox checkbox-xs" name="rest_required" value="1" />
+                          <span class="text-sm">Rest Required (Senior Pet – 16 years old)</span>
+                        </label>
+                      </div>
+                      @endif
                     </div>
                   </div>
                 </div>

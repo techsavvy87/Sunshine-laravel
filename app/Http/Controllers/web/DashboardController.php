@@ -89,6 +89,9 @@ class DashboardController extends Controller
         $petPercentageChange = round($petPercentageChange, 1);
         
         $todayAppointments = Appointment::whereDate('date', $today)->count();
+
+        $todayBoardingCheckins = $this->countBoardingPetsByDate('date', $today);
+        $todayBoardingCheckouts = $this->countBoardingPetsByDate('end_date', $today);
         
         $yesterdayAppointments = Appointment::whereDate('date', $yesterday)->count();
         
@@ -118,7 +121,7 @@ class DashboardController extends Controller
         
         $revenueData = $this->getRevenueStatistics($period);
         
-        return view('dashboard.index', compact('active', 'todayRevenue', 'yesterdayRevenue', 'percentageChange', 'totalCustomers', 'customerPercentageChange', 'todayNewCustomers', 'yesterdayCustomers', 'totalPets', 'petPercentageChange', 'todayNewPets', 'yesterdayNewPets', 'todayAppointments', 'yesterdayAppointments', 'appointmentPercentageChange', 'recentAppointments', 'revenueData', 'period'));
+        return view('dashboard.index', compact('active', 'todayRevenue', 'yesterdayRevenue', 'percentageChange', 'totalCustomers', 'customerPercentageChange', 'todayNewCustomers', 'yesterdayCustomers', 'totalPets', 'petPercentageChange', 'todayNewPets', 'yesterdayNewPets', 'todayAppointments', 'todayBoardingCheckins', 'todayBoardingCheckouts', 'yesterdayAppointments', 'appointmentPercentageChange', 'recentAppointments', 'revenueData', 'period'));
     }
 
     public function serviceDashboard(Request $request, $id)
@@ -678,6 +681,34 @@ class DashboardController extends Controller
             'percentageChange' => round($percentageChange, 2),
             'period' => $period
         ];
+    }
+
+    private function countBoardingPetsByDate(string $dateColumn, Carbon $date): int
+    {
+        $appointments = Appointment::with('pet:id,type')
+            ->whereDate($dateColumn, $date)
+            ->whereNotIn('status', ['cancelled', 'canceled', 'no_show'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->get();
+
+        return $appointments->sum(function (Appointment $appointment) {
+            $familyPetIds = collect($appointment->family_pet_ids)
+                ->map(fn ($petId) => (int) $petId)
+                ->filter(fn ($petId) => $petId > 0)
+                ->unique()
+                ->values();
+
+            if ($familyPetIds->isNotEmpty()) {
+                return PetProfile::whereIn('id', $familyPetIds)
+                    ->whereIn('type', ['Dog', 'Cat'])
+                    ->count();
+            }
+
+            $petType = optional($appointment->pet)->type;
+            return in_array($petType, ['Dog', 'Cat'], true) ? 1 : 0;
+        });
     }
 
     public function boardingProcessLog(Request $request)
