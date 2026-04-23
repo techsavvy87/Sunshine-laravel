@@ -351,10 +351,10 @@ class CustomerController extends Controller
     public function deleteCustomer(Request $request)
     {
         $request->validate([
-            'customer_id' => 'required|exists:users,id'
+            'user_id' => 'required|exists:users,id'
         ]);
 
-        $user = User::findOrFail($request->customer_id);
+        $user = User::findOrFail($request->user_id);
 
         // Delete user's avatar if exists
         if ($user->profile && $user->profile->avatar_img) {

@@ -134,7 +134,7 @@
       </form>
       <form id="delete_form" method="POST" action="{{ route('delete-customer') }}">
         @csrf
-        <input type="hidden" name="customer_id" value="" />
+        <input type="hidden" name="user_id" value="" />
         <button class="btn btn-error">Delete</button>
       </form>
     </div>
