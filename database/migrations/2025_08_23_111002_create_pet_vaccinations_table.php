@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('pet_vaccinations', function (Blueprint $table) {
             $table->id();
             $table->foreignId('pet_profile_id')->constrained('pet_profiles')->onDelete('cascade');
-            $table->enum('type', ['distemper', 'parvo', 'leptospirosis', 'rabies', 'bordetella']);
+            $table->string('type');
             $table->date('date');
             $table->unsignedTinyInteger('months')->nullable();
             $table->timestamps();
