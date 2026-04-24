@@ -207,10 +207,14 @@
       <div class="xl:col-span-3">
         <div class="card bg-base-100 shadow">
           <div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-md font-bold">Vaccinations</span>
+              <button type="button" class="btn btn-primary btn-sm" onclick="addVaccinationRow()">
+                <span class="iconify lucide--plus size-4"></span>
+                Add
+              </button>
+            </div>
             <fieldset class="fieldset bg-base-300 border-base-300 rounded-box border p-4">
-              <legend class="fieldset-legend bg-base-100 px-1.5 pb-0">
-                <span class="text-md font-bold">Vaccinations</span>
-              </legend>
               <div class="fieldset space-y-2" id="vaccinations_container"></div>
             </fieldset>
           </div>
@@ -369,9 +373,6 @@
             <input class="input w-full vaccination-months" placeholder="Months" type="text" value="${months}" oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
           </div>
           <div class="xl:col-span-1 flex items-center justify-end gap-1">
-            <button type="button" class="btn btn-ghost btn-sm p-1" title="Add vaccination" onclick="addVaccinationRow()">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0bbf58" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus-icon lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-            </button>
             <button type="button" class="btn btn-ghost btn-sm p-1 btn-remove-vaccination" title="Remove vaccination" onclick="removeVaccinationRow(this)">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f31260" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-minus-icon lucide-minus"><path d="M5 12h14"/></svg>
             </button>
