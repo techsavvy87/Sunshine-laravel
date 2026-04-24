@@ -684,6 +684,8 @@
           $('#size').val(selectedSize).trigger('change');
         }
       });
+
+      addVaccinationRow();
     });
 
     function savePet() {
