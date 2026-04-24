@@ -1538,10 +1538,6 @@
     }
 
     function removeVaccinationRow(button) {
-      if ($('#vaccinations_container .vaccination-row').length <= 1) {
-        return;
-      }
-
       const $row = $(button).closest('.vaccination-row');
       const $select = $row.find('.vaccination-type-select');
       if ($select.hasClass('select2-hidden-accessible')) {
@@ -1553,13 +1549,10 @@
     }
 
     function updateVaccinationRemoveButtons() {
-      const rowCount = $('#vaccinations_container .vaccination-row').length;
-      const shouldDisable = rowCount <= 1;
       $('#vaccinations_container .btn-remove-vaccination').each(function() {
-        $(this).prop('disabled', shouldDisable);
         $(this)
           .find('svg')
-          .attr('stroke', shouldDisable ? vaccinationRemoveDisabledColor : vaccinationRemoveActiveColor);
+          .attr('stroke', vaccinationRemoveActiveColor);
       });
     }
 
