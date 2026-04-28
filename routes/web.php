@@ -305,8 +305,8 @@ Route::middleware(['auth'])->group(function () {
     });
 
     Route::controller(AppointmentAuditLogController::class)->group(function () {
-        Route::get('/appointment-audit-log', 'index')->name('appointment-audit-log')->middleware('ensure.permission:29,can_read');
-        Route::post('/appointment-audit-log/delete', 'destroy')->name('appointment-audit-log-delete')->middleware('ensure.permission:29,can_delete');
+        Route::get('/appointment-audit-log', 'index')->name('appointment-audit-log')->middleware('ensure.permission:23,can_read');
+        Route::post('/appointment-audit-log/delete', 'destroy')->name('appointment-audit-log-delete')->middleware('ensure.permission:23,can_delete');
     });
 
     Route::controller(ReportController::class)->group(function () {
@@ -340,12 +340,12 @@ Route::middleware(['auth'])->group(function () {
     });
 
     Route::controller(DiscountController::class)->group(function () {
-        Route::get('/discounts', 'listDiscounts')->name('discounts')->middleware('ensure.permission:30,can_read');
-        Route::get('/discount/add', 'addDiscount')->name('add-discount')->middleware('ensure.permission:30,can_create');
-        Route::get('/discount/edit/{id}', 'editDiscount')->name('edit-discount')->middleware('ensure.permission:30,can_update');
-        Route::post('/discount/create', 'createDiscount')->name('create-discount')->middleware('ensure.permission:30,can_create');
-        Route::post('/discount/update', 'updateDiscount')->name('update-discount')->middleware('ensure.permission:30,can_update');
-        Route::post('/discount/delete', 'deleteDiscount')->name('delete-discount')->middleware('ensure.permission:30,can_delete');
+        Route::get('/discounts', 'listDiscounts')->name('discounts')->middleware('ensure.permission:24,can_read');
+        Route::get('/discount/add', 'addDiscount')->name('add-discount')->middleware('ensure.permission:24,can_create');
+        Route::get('/discount/edit/{id}', 'editDiscount')->name('edit-discount')->middleware('ensure.permission:24,can_update');
+        Route::post('/discount/create', 'createDiscount')->name('create-discount')->middleware('ensure.permission:24,can_create');
+        Route::post('/discount/update', 'updateDiscount')->name('update-discount')->middleware('ensure.permission:24,can_update');
+        Route::post('/discount/delete', 'deleteDiscount')->name('delete-discount')->middleware('ensure.permission:24,can_delete');
     });
 
     Route::controller(PetBehaviorController::class)->group(function () {

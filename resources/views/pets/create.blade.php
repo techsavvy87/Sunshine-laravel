@@ -10,6 +10,13 @@
       cursor: pointer;
       font-size: 20px;
     }
+    .select2-container {
+      width: 100% !important;
+    }
+
+    .select2-dropdown {
+      z-index: 9999;
+    }
   </style>
 @endsection
 
@@ -308,6 +315,7 @@
       $('#vaccinations_container .vaccination-type-select')
         .off('change.uniqueVaccination')
         .on('change.uniqueVaccination', function() {
+          $(this).select2('close');
           refreshVaccinationDropdowns();
         });
     }
@@ -346,7 +354,9 @@
       row.find('.vaccination-type-select').select2({
         placeholder: 'Select vaccination',
         allowClear: true,
-        width: '100%'
+        width: '100%',
+        dropdownParent: row.closest('.card-body'),
+        minimumResultsForSearch: Infinity
       });
     }
 

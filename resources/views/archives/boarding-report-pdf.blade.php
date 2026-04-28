@@ -234,7 +234,7 @@
   @endif
 
   <!-- Dispense Information -->
-  @if(isset($checkin->flows['food_brand']) || isset($checkin->flows['feeding_am']) || isset($checkin->flows['feeding_pm']) || isset($checkin->flows['food_quantity']) || isset($checkin->flows['food_starting_amount']) || isset($checkin->flows['food_description']) || isset($checkin->flows['additional_feedings']) || isset($checkin->flows['additional_feedings_am']) || isset($checkin->flows['additional_feedings_pm']) || isset($checkin->flows['medications']) || isset($checkin->flows['medications_am']) || isset($checkin->flows['medications_pm']))
+  @if(isset($checkin->flows['food_brand']) || isset($checkin->flows['feeding_am']) || isset($checkin->flows['feeding_pm']) || isset($checkin->flows['food_quantity']) || isset($checkin->flows['food_starting_amount']) || isset($checkin->flows['food_description']) || isset($checkin->flows['additional_feedings']) || isset($checkin->flows['additional_feedings_am']) || isset($checkin->flows['additional_feedings_pm']) || isset($checkin->flows['medications']) || isset($checkin->flows['medications_am']) || isset($checkin->flows['medications_pm']) || (isset($checkin->flows['meds_list']) && is_array($checkin->flows['meds_list']) && count($checkin->flows['meds_list']) > 0))
   <div class="section">
     <h3>Dispense Information</h3>
     @if(isset($checkin->flows['food_brand']) && $checkin->flows['food_brand'])
@@ -301,7 +301,58 @@
       @endif
     </div>
     @endif
-    @if(isset($checkin->flows['medications']) || isset($checkin->flows['medications_am']) || isset($checkin->flows['medications_pm']))
+    @php
+      $medicationRows = isset($checkin->flows['meds_list']) && is_array($checkin->flows['meds_list']) ? $checkin->flows['meds_list'] : [];
+    @endphp
+    @if(count($medicationRows) > 0)
+    <div class="field">
+      <span class="field-label">Medications:</span>
+      <div class="field-value notes" style="margin-left: 120px; margin-top: 3px;">
+        @foreach($medicationRows as $medicationRow)
+          @php
+            if (!is_array($medicationRow)) {
+              continue;
+            }
+
+            $conditionValue = $medicationRow['condition'] ?? '';
+            $mealConditionValue = $medicationRow['meal_condition'] ?? $conditionValue;
+            if ($mealConditionValue === 'after_meals') {
+              $mealConditionValue = 'after_meal';
+            }
+            $conditionLabel = match ($mealConditionValue) {
+              'after_meal' => 'After Meal',
+              'before_meal' => 'Before Meal',
+              'empty_stomach' => 'Empty Stomach',
+              default => '',
+            };
+            $customTime = $medicationRow['custom_time'] ?? '';
+            $dispenseLabels = [];
+            if (!empty($medicationRow['dispense_am']) && ($medicationRow['dispense_am'] === true || $medicationRow['dispense_am'] === 'true')) {
+              $dispenseLabels[] = 'AM';
+            }
+            if (!empty($medicationRow['dispense_pm']) && ($medicationRow['dispense_pm'] === true || $medicationRow['dispense_pm'] === 'true')) {
+              $dispenseLabels[] = 'PM';
+            }
+            if (!empty($medicationRow['dispense_rest']) && ($medicationRow['dispense_rest'] === true || $medicationRow['dispense_rest'] === 'true')) {
+              $dispenseLabels[] = 'Rest';
+            }
+            if (!empty($medicationRow['dispense_before_bed']) && ($medicationRow['dispense_before_bed'] === true || $medicationRow['dispense_before_bed'] === 'true')) {
+              $dispenseLabels[] = 'Before Bed';
+            }
+            if (!empty($medicationRow['dispense_custom_time']) && ($medicationRow['dispense_custom_time'] === true || $medicationRow['dispense_custom_time'] === 'true')) {
+              $dispenseLabels[] = !empty($customTime) ? 'Custom Time (' . $customTime . ')' : 'Custom Time';
+            }
+            if (empty($dispenseLabels) && $conditionValue === 'before_sleep') {
+              $dispenseLabels[] = 'Before Bed';
+            }
+          @endphp
+          <div style="margin-bottom: 4px;">
+            <strong>Name:</strong> {{ $medicationRow['name'] ?? '-' }} | <strong>Dosage/Instruction:</strong> {{ $medicationRow['amount'] ?? '-' }} | <strong>Dispense:</strong> {{ count($dispenseLabels) ? implode(', ', $dispenseLabels) : '-' }} | <strong>Meal Condition:</strong> {{ $conditionLabel ?: '-' }}
+          </div>
+        @endforeach
+      </div>
+    </div>
+    @elseif(isset($checkin->flows['medications']) || isset($checkin->flows['medications_am']) || isset($checkin->flows['medications_pm']))
     <div class="field">
       <span class="field-label">Medications:</span>
       <span class="field-value">

@@ -74,17 +74,26 @@
               <th>No</th>
               <th>Customer</th>
               <th>Pet</th>
+              <th>Room</th>
               <th>Kennel</th>
               <th>Service</th>
               <th>Staff</th>
-              <th style="text-align:center">Start Date</th>
-              <th style="text-align:center">End Date</th>
+              <th style="text-align:center">Check-in</th>
+              <th style="text-align:center">Pickup</th>
+              <th style="text-align:center">Stay</th>
+              <th style="text-align:center">Meals</th>
               <th style="text-align:center">Status</th>
               <th style="padding-left: 30px">Action</th>
             </tr>
           </thead>
           <tbody>
             @foreach ($appointments as $appointment)
+            @php
+              $checkInDate = \Carbon\Carbon::parse($appointment->date);
+              $pickupDate = \Carbon\Carbon::parse($appointment->end_date);
+              $stayDays = $checkInDate->copy()->startOfDay()->diffInDays($pickupDate->copy()->startOfDay()) + 1;
+              $totalMeals = $stayDays * 2;
+            @endphp
             <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap">
               <td>{{ $loop->iteration }}</td>
               <td>{{ $appointment->customer->profile->first_name }} {{ $appointment->customer->profile->last_name }}</td>
@@ -108,19 +117,24 @@
                 </div>
               </td>
               <td>
-                @if ($appointment->cat_room_id && $appointment->catRoom)
-                  {{ $appointment->catRoom->name }}
-                @else
-                  {{ optional($appointment->kennel)->name ?? '—' }}
-                @endif
+                {{ optional($appointment->catRoom)->name ?? $roomByKennel->get((string) $appointment->kennel_id, '—') }}
+              </td>
+              <td>
+                {{ optional($appointment->kennel)->name ?? '—' }}
               </td>
               <td>{{ $appointment->service->name }}</td>
               <td>{{ $appointment->staff_id ? ($appointment->staff->profile ? $appointment->staff->profile->first_name : $appointment->staff->name) : 'Unassigned' }}</td>
               <td style="text-align:center">
-                {{ \Carbon\Carbon::parse($appointment->date)->format('m/d/Y') }}&nbsp;&nbsp;{{ $appointment->start_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->start_time)->format('h:i A') : '—' }}
+                {{ $checkInDate->format('M j') }}
               </td>
               <td style="text-align:center">
-                {{ \Carbon\Carbon::parse($appointment->end_date)->format('m/d/Y') }}&nbsp;&nbsp;{{ $appointment->end_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') : '—' }}
+                {{ $pickupDate->format('M j') }}{{ $appointment->end_time ? ' ' . \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('g:i A') : '' }}
+              </td>
+              <td style="text-align:center">
+                {{ $stayDays }} {{ $stayDays === 1 ? 'day' : 'days' }}
+              </td>
+              <td style="text-align:center">
+                {{ $totalMeals }} meals
               </td>
               <td style="text-align:center">
                 @if($appointment->status === 'checked_in')

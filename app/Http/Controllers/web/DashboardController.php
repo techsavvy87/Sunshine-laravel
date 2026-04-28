@@ -20,6 +20,7 @@ use App\Models\CustomerPackage;
 use App\Models\Package;
 use App\Models\Discount;
 use App\Models\PetBehavior;
+use App\Models\IncidentReport;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 
@@ -92,6 +93,15 @@ class DashboardController extends Controller
 
         $todayBoardingCheckins = $this->countBoardingPetsByDate('date', $today);
         $todayBoardingCheckouts = $this->countBoardingPetsByDate('end_date', $today);
+        $boardingServiceIds = Service::whereHas('category', function ($query) {
+            $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+        })->pluck('id');
+        $incidentReportServiceId = $boardingServiceIds->first();
+        $todayBoardingIncidents = $boardingServiceIds->isNotEmpty()
+            ? IncidentReport::whereIn('service_id', $boardingServiceIds)
+                ->whereDate('created_at', $today)
+                ->count()
+            : 0;
         
         $yesterdayAppointments = Appointment::whereDate('date', $yesterday)->count();
         
@@ -121,7 +131,7 @@ class DashboardController extends Controller
         
         $revenueData = $this->getRevenueStatistics($period);
         
-        return view('dashboard.index', compact('active', 'todayRevenue', 'yesterdayRevenue', 'percentageChange', 'totalCustomers', 'customerPercentageChange', 'todayNewCustomers', 'yesterdayCustomers', 'totalPets', 'petPercentageChange', 'todayNewPets', 'yesterdayNewPets', 'todayAppointments', 'todayBoardingCheckins', 'todayBoardingCheckouts', 'yesterdayAppointments', 'appointmentPercentageChange', 'recentAppointments', 'revenueData', 'period'));
+        return view('dashboard.index', compact('active', 'todayRevenue', 'yesterdayRevenue', 'percentageChange', 'totalCustomers', 'customerPercentageChange', 'todayNewCustomers', 'yesterdayCustomers', 'totalPets', 'petPercentageChange', 'todayNewPets', 'yesterdayNewPets', 'todayAppointments', 'todayBoardingCheckins', 'todayBoardingCheckouts', 'todayBoardingIncidents', 'incidentReportServiceId', 'yesterdayAppointments', 'appointmentPercentageChange', 'recentAppointments', 'revenueData', 'period'));
     }
 
     public function serviceDashboard(Request $request, $id)
@@ -200,60 +210,9 @@ class DashboardController extends Controller
             ->find($id);
         $dbEstimatedPrice = $appointment->estimated_price ?? 0;
 
-        // Check if this is a package appointment - service_id refers to a service with package category
-        $isPackageAppointment = $appointment->service && isPackageService($appointment->service);
-        $packageServiceIds = [];
-        
-        // For package appointments, load services from additional_service_ids
-        if ($isPackageAppointment && $appointment->additional_service_ids) {
-            $packageServiceIds = explode(',', $appointment->additional_service_ids);
-            $packageServices = Service::whereIn('id', $packageServiceIds)->get();
-            $appointment->package_services = $packageServices;
-            if ($appointment->metadata && isset($appointment->metadata['package_name'])) {
-                $appointment->package_name = $appointment->metadata['package_name'];
-            } else {
-                if ($appointment->metadata && isset($appointment->metadata['package_id'])) {
-                    $package = Package::find($appointment->metadata['package_id']);
-                    if ($package) {
-                        $appointment->package_name = $package->name;
-                    } else {
-                        $appointment->package_name = $appointment->service ? $appointment->service->name : 'Package';
-                    }
-                } else {
-                    $appointment->package_name = $appointment->service ? $appointment->service->name : 'Package';
-                }
-            }
-        }
-
-        // If group class appointment, then add the class name to the appointment object
-        if (isGroupClassService($appointment->service)) {
-            $appointment->class_name = optional(GroupClass::find($appointment->metadata['group_class_ids'] ?? null))->name ?? '';
-        }
-        // If ala carte appointment, then add the secondary service names to the appointment object
-        if (isAlaCarteService($appointment->service)) {
-            $secondaryServiceNames = [];
-            if ($appointment->metadata && isset($appointment->metadata['secondary_service_ids'])) {
-                $secondaryServiceIds = explode(',', $appointment->metadata['secondary_service_ids']);
-                foreach ($secondaryServiceIds as $serviceId) {
-                    $service = Service::find($serviceId);
-                    if ($service) {
-                        $secondaryServiceNames[] = $service->name;
-                    }
-                }
-            }
-            $appointment->secondary_service_names = implode(', ', $secondaryServiceNames);
-        }
-
-        $chauffeurPricingData = buildChauffeurPricingData($appointment);
-        $chauffeurServicePrices = $chauffeurPricingData['service_prices'] ?? [];
-
-        $resolveAppointmentServicePrice = function ($service, $petSize, $metadata = null) use ($chauffeurServicePrices) {
+        $resolveAppointmentServicePrice = function ($service, $petSize, $metadata = null) {
             if (!$service) {
                 return 0;
-            }
-
-            if (array_key_exists($service->id, $chauffeurServicePrices)) {
-                return floatval($chauffeurServicePrices[$service->id]);
             }
 
             return getServicePrice($service, $petSize, $metadata);
@@ -302,107 +261,38 @@ class DashboardController extends Controller
 
         // Set up the estimated price of the appointment
         $computedEstimatedPrice = 0;
-        if ($isPackageAppointment && $appointment->pet && !empty($packageServiceIds)) {
-            // For package appointments, sum up the prices of all services in the package
-            $petSize = $appointment->pet->size ?? 'medium';
-            foreach ($packageServiceIds as $serviceId) {
-                if (!empty($serviceId)) {
-                    $service = Service::find($serviceId);
-                    if ($service) {
-                        $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $petSize);
-                    }
-                }
-            }
+        // For regular appointments, use service price (boarding uses appointment-based pricing)
+        if (isBoardingService($appointment->service)) {
+            $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
+            $computedEstimatedPrice = $boardingPrice !== null
+                ? $boardingPrice
+                : $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
         } else {
-            // Check if this is a group classes appointment
-            $isGroupClasses = isGroupClassService($appointment->service);
-            $groupClassIds = [];
-            if ($isGroupClasses && $appointment->metadata && isset($appointment->metadata['group_class_ids'])) {
-                $groupClassIds = explode(',', $appointment->metadata['group_class_ids']);
-            }
-            // Check if this is an ala carte appointment
-            $isAlaCarte = isAlaCarteService($appointment->service);
-            $secondaryServiceIds = [];
-            if ($isAlaCarte && $appointment->metadata && isset($appointment->metadata['secondary_service_ids'])) {
-                $secondaryServiceIds = explode(',', $appointment->metadata['secondary_service_ids']);
-            }
-
-            if ($isGroupClasses && !empty($groupClassIds)) {
-                // For group classes, sum up the prices of selected group classes
-                foreach ($groupClassIds as $classId) {
-                    $groupClass = GroupClass::find($classId);
-                    if ($groupClass) {
-                        $computedEstimatedPrice += $groupClass->price;
-                    }
-                }
-            } elseif ($isAlaCarte && !empty($secondaryServiceIds) && $appointment->pet) {
-                // For ala carte services, sum up the prices of selected secondary services
-                $petSize = $appointment->pet->size ?? 'medium';
-                foreach ($secondaryServiceIds as $serviceId) {
-                    if (!empty($serviceId)) {
-                        $service = Service::find($serviceId);
-                        if ($service) {
-                            $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $petSize);
-                        }
-                    }
-                }
-
-                $secondaryServiceIdSet = collect($secondaryServiceIds)
-                    ->map(fn ($serviceId) => (string) trim($serviceId))
-                    ->filter()
-                    ->values();
-
-                $additionalServiceIds = collect(explode(',', $appointment->additional_service_ids ?? ''))
-                    ->map(fn ($serviceId) => (string) trim($serviceId))
-                    ->filter()
-                    ->reject(fn ($serviceId) => $secondaryServiceIdSet->contains($serviceId))
-                    ->values();
-
-                foreach ($additionalServiceIds as $serviceId) {
-                    $service = Service::find($serviceId);
-                    if ($service) {
-                        $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $petSize);
-                    }
-                }
-            } else {
-                // For regular appointments, use service price (boarding uses appointment-based pricing)
-                if (isBoardingService($appointment->service)) {
-                    $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
-                    $computedEstimatedPrice = $boardingPrice !== null
-                        ? $boardingPrice
-                        : $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
-                } else {
-                    $computedEstimatedPrice = $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
-                }
-
-                $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
-                foreach ($additionalServiceIds as $serviceId) {
-                    if (!empty($serviceId)) {
-                        $service = Service::find($serviceId);
-                        if ($service) {
-                            $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $appointment->pet->size);
-                        }
-                    }
-                }
-            }
-
-            $coatPricingServiceIds = [];
-            $coatPricingServiceIds[] = $appointment->service_id;
-
-            if (!empty($appointment->second_service_id ?? null)) {
-                $coatPricingServiceIds[] = $appointment->second_service_id;
-            }
-
-            if (!empty($appointment->additional_service_ids)) {
-                $coatPricingServiceIds = array_merge($coatPricingServiceIds, explode(',', $appointment->additional_service_ids));
-            }
-
-            if (isAlaCarteService($appointment->service) && $appointment->metadata && isset($appointment->metadata['secondary_service_ids'])) {
-                $coatPricingServiceIds = array_merge($coatPricingServiceIds, explode(',', $appointment->metadata['secondary_service_ids']));
-            }
-
-            $computedEstimatedPrice += $calculateCoatTypeExtraFee($coatPricingServiceIds);
+            $computedEstimatedPrice = $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
         }
+
+        $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
+        foreach ($additionalServiceIds as $serviceId) {
+            if (!empty($serviceId)) {
+                $service = Service::find($serviceId);
+                if ($service) {
+                    $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $appointment->pet->size);
+                }
+            }
+        }
+
+        $coatPricingServiceIds = [];
+        $coatPricingServiceIds[] = $appointment->service_id;
+
+        if (!empty($appointment->second_service_id ?? null)) {
+            $coatPricingServiceIds[] = $appointment->second_service_id;
+        }
+
+        if (!empty($appointment->additional_service_ids)) {
+            $coatPricingServiceIds = array_merge($coatPricingServiceIds, explode(',', $appointment->additional_service_ids));
+        }
+
+        $computedEstimatedPrice += $calculateCoatTypeExtraFee($coatPricingServiceIds);
 
         $storedEstimatedPrice = floatval($appointment->estimated_price ?? 0);
         $appointment->estimated_price = $storedEstimatedPrice > 0
@@ -418,13 +308,10 @@ class DashboardController extends Controller
         if (!empty($appointment->additional_service_ids)) {
             $coatFeeServiceIds = array_merge($coatFeeServiceIds, explode(',', $appointment->additional_service_ids));
         }
-        if (isAlaCarteService($appointment->service) && $appointment->metadata && isset($appointment->metadata['secondary_service_ids'])) {
-            $coatFeeServiceIds = array_merge($coatFeeServiceIds, explode(',', $appointment->metadata['secondary_service_ids']));
-        }
         $coatExtraFee = $calculateCoatTypeExtraFee($coatFeeServiceIds);
         $appointment->coat_extra_fee = $coatExtraFee > 0 ? $coatExtraFee : null;
 
-        $staffs = \App\Models\User::whereHas('roles', function ($query) {
+        $staffs = User::whereHas('roles', function ($query) {
             $query->whereNot('title', 'customer');
         })->with('profile')->get();
 
@@ -434,11 +321,8 @@ class DashboardController extends Controller
             $checkedIn->flows = json_decode($checkedIn->flows, true);
         }
 
-        // For package appointments, we don't load a single process - each service has its own process
         // For boarding services, try to load process for the appointment date
-        if ($isPackageAppointment) {
-            $process = null; // Package appointments have multiple processes, one per service
-        } elseif (isBoardingService($appointment->service)) {
+        if (isBoardingService($appointment->service)) {
             $process = Process::where('appointment_id', $appointment->id)
                 ->where('date', $appointment->date)
                 ->first();
@@ -458,69 +342,9 @@ class DashboardController extends Controller
 
         $invoice = Invoice::where('appointment_id', $appointment->id)->first();
 
-        $initialTemperament = null;
-
-        if ((isGroomingService($appointment->service) || isAlaCarteService($appointment->service)) && $appointment->pet) {
-            $initialTemperament = PetInitialTemperament::where('pet_id', $appointment->pet->id)->first();
-        }
-
         $additionalServices = Service::where('id', '!=', $appointment->service_id)->where('status', 'active')->get();
 
         $lastAppointmentRatings = [];
-        if (isPrivateTrainingService($appointment->service)) {
-            $allCompletedAppointments = Appointment::where('appointments.pet_id', $appointment->pet_id)
-                ->where('appointments.id', '!=', $appointment->id)
-                ->join('checkouts', 'appointments.id', '=', 'checkouts.appointment_id')
-                ->with('service.category')
-                ->orderBy('checkouts.updated_at', 'desc')
-                ->orderBy('checkouts.created_at', 'desc')
-                ->select('appointments.*')
-                ->get();
-
-            $lastAppointment = null;
-            foreach ($allCompletedAppointments as $apt) {
-                if (isPrivateTrainingService($apt->service)) {
-                    $lastAppointment = $apt;
-                    break;
-                }
-            }
-
-            if ($lastAppointment) {
-                try {
-                    $lastCheckout = Checkout::where('appointment_id', $lastAppointment->id)->first();
-                    if ($lastCheckout && $lastCheckout->flows) {
-                        if (is_string($lastCheckout->flows)) {
-                            $lastCheckoutFlows = json_decode($lastCheckout->flows, true);
-                        } else {
-                            $lastCheckoutFlows = $lastCheckout->flows;
-                        }
-
-                        if (is_array($lastCheckoutFlows) && isset($lastCheckoutFlows['obedience_ratings'])) {
-                            if (is_array($lastCheckoutFlows['obedience_ratings'])) {
-                                $lastAppointmentRatings = $lastCheckoutFlows['obedience_ratings'];
-                            } elseif (is_string($lastCheckoutFlows['obedience_ratings'])) {
-                                $decoded = json_decode($lastCheckoutFlows['obedience_ratings'], true);
-                                if (is_array($decoded)) {
-                                    $lastAppointmentRatings = $decoded;
-                                }
-                            }
-                        }
-                    }
-                } catch (\Exception $e) {
-                    $lastAppointmentRatings = [];
-                }
-            }
-        }
-
-        $customerPackage = null;
-        if ($isPackageAppointment && $appointment->metadata && isset($appointment->metadata['customer_package_id'])) {
-            $customerPackage = CustomerPackage::find($appointment->metadata['customer_package_id']);
-        }
-
-        // Check if this is a package appointment - service_id refers to a service with package category
-        if ($isPackageAppointment) {
-            return view('dashboard.appointment-package', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'customerPackage'));
-        }
 
         $invoiceDiscountRules = getScopedDiscountsForCustomerAndService($appointment->customer_id, $appointment->service_id)
             ->map(function ($discount) {
@@ -537,7 +361,7 @@ class DashboardController extends Controller
 
         $petBehaviors = PetBehavior::with('icon')->orderBy('description')->get();
 
-        return view('dashboard.appointment', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'initialTemperament', 'invoiceDiscountRules', 'petBehaviors', 'chauffeurPricingData', 'dbEstimatedPrice'));
+        return view('dashboard.appointment', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'invoiceDiscountRules', 'petBehaviors', 'dbEstimatedPrice'));
     }
 
     public function listDashboard(Request $request, $id)
@@ -974,14 +798,61 @@ class DashboardController extends Controller
             $pet = $appointment->pet;
             $dryFood = $flows['dry_food'] ?? [];
             $wetFood = $flows['wet_food'] ?? [];
+            $dryFoodList = is_array($flows['dry_food_list'] ?? null) ? $flows['dry_food_list'] : [];
+            $wetFoodList = is_array($flows['wet_food_list'] ?? null) ? $flows['wet_food_list'] : [];
             $meds = $flows['meds'] ?? [];
+            $medsList = is_array($flows['meds_list'] ?? null) ? $flows['meds_list'] : [];
             $lunchDry = ! empty($dryFood['dispense_lunch']) && ($dryFood['dispense_lunch'] === true || $dryFood['dispense_lunch'] === 'true');
             $lunchWet = ! empty($wetFood['dispense_lunch']) && ($wetFood['dispense_lunch'] === true || $wetFood['dispense_lunch'] === 'true');
+
+            if (! $lunchDry && ! empty($dryFoodList)) {
+                foreach ($dryFoodList as $foodItem) {
+                    if (! is_array($foodItem)) {
+                        continue;
+                    }
+
+                    if (! empty($foodItem['dispense_lunch']) && ($foodItem['dispense_lunch'] === true || $foodItem['dispense_lunch'] === 'true')) {
+                        $lunchDry = true;
+                        break;
+                    }
+                }
+            }
+
+            if (! $lunchWet && ! empty($wetFoodList)) {
+                foreach ($wetFoodList as $foodItem) {
+                    if (! is_array($foodItem)) {
+                        continue;
+                    }
+
+                    if (! empty($foodItem['dispense_lunch']) && ($foodItem['dispense_lunch'] === true || $foodItem['dispense_lunch'] === 'true')) {
+                        $lunchWet = true;
+                        break;
+                    }
+                }
+            }
+
             if (! empty($flows['scheduled_lunch']) && ($flows['scheduled_lunch'] === true || $flows['scheduled_lunch'] === 'true') && ! $lunchDry && ! $lunchWet) {
                 $lunchDry = true;
                 $lunchWet = true;
             }
             $scheduledRest = ! empty($meds['dispense_rest']) && ($meds['dispense_rest'] === true || $meds['dispense_rest'] === 'true');
+            if (! $scheduledRest && ! empty($medsList)) {
+                foreach ($medsList as $medicationItem) {
+                    if (! is_array($medicationItem)) {
+                        continue;
+                    }
+
+                    $itemHasRest =
+                        (!empty($medicationItem['dispense_rest']) && ($medicationItem['dispense_rest'] === true || $medicationItem['dispense_rest'] === 'true')) ||
+                        (!empty($medicationItem['dispense_before_bed']) && ($medicationItem['dispense_before_bed'] === true || $medicationItem['dispense_before_bed'] === 'true'));
+                    $condition = $medicationItem['condition'] ?? null;
+
+                    if ($itemHasRest || $condition === 'before_sleep') {
+                        $scheduledRest = true;
+                        break;
+                    }
+                }
+            }
 
             $data[] = [
                 'appointment_id' => $appointmentId,
@@ -1366,6 +1237,7 @@ class DashboardController extends Controller
 
         $checkinFlows = is_array(optional($checkin)->flows) ? $checkin->flows : [];
         $medsFlows = is_array($checkinFlows['meds'] ?? null) ? $checkinFlows['meds'] : [];
+        $medsListFlows = is_array($checkinFlows['meds_list'] ?? null) ? $checkinFlows['meds_list'] : [];
 
         $isTruthy = function ($value) {
             return $value === true || $value === 1 || $value === '1' || $value === 'true';
@@ -1379,6 +1251,7 @@ class DashboardController extends Controller
             $medicationRequired = ($requestMedsAm === true) || ($requestMedsPm === true);
         } else {
             $medicationRequired =
+                !empty($medsListFlows) ||
                 $isTruthy($medsFlows['dispense_am'] ?? null) ||
                 $isTruthy($medsFlows['dispense_pm'] ?? null) ||
                 $isTruthy($checkinFlows['medications_am'] ?? null) ||

@@ -6,7 +6,7 @@
   <style>
     .select2-container--default .select2-selection--multiple {
       min-height: 40px;
-      height: 40px;
+      height: auto;
       overflow-y: auto;
       overflow-x: hidden !important;
       white-space: normal !important;
@@ -951,6 +951,121 @@
     });
   }
 
+  function isFlowChecked(value) {
+    return value === true || value === 'true';
+  }
+
+  function getFoodRowsFromFlows(flows, type) {
+    const listKey = type === 'dry' ? 'dry_food_list' : 'wet_food_list';
+    const singleKey = type === 'dry' ? 'dry_food' : 'wet_food';
+    const rows = Array.isArray(flows[listKey]) ? flows[listKey].filter(item => item && typeof item === 'object') : [];
+
+    if (rows.length > 0) {
+      return rows;
+    }
+
+    const fallback = flows[singleKey] || {};
+    if (fallback.brand || fallback.amount || isFlowChecked(fallback.dispense_am) || isFlowChecked(fallback.dispense_pm) || isFlowChecked(fallback.dispense_lunch)) {
+      return [fallback];
+    }
+
+    return [];
+  }
+
+  function getMedicationRowsFromFlows(flows) {
+    const rows = Array.isArray(flows.meds_list) ? flows.meds_list.filter(item => item && typeof item === 'object') : [];
+    if (rows.length > 0) {
+      return rows;
+    }
+
+    const fallback = flows.meds || {};
+    if (fallback.name || fallback.amount || isFlowChecked(fallback.dispense_am) || isFlowChecked(fallback.dispense_pm) || isFlowChecked(fallback.dispense_rest)) {
+      return [fallback];
+    }
+
+    return [];
+  }
+
+  function hasFoodDispense(rows, period) {
+    return rows.some(row => isFlowChecked(row && row[period]));
+  }
+
+  function hasMedicationDispense(rows, period) {
+    return rows.some(row => isFlowChecked(row && row[period]));
+  }
+
+  function buildFoodDisplayText(rows, displayPeriod = null) {
+    if (!rows || rows.length === 0) {
+      return '-';
+    }
+
+    const periodKey = displayPeriod === 'am' ? 'dispense_am' : (displayPeriod === 'pm' ? 'dispense_pm' : null);
+    const rowsToRender = periodKey ? rows.filter(row => isFlowChecked(row && row[periodKey])) : rows;
+    if (rowsToRender.length === 0) {
+      return '-';
+    }
+
+    const rowTexts = rowsToRender.map(row => {
+      const labels = [];
+      if (displayPeriod === 'am') {
+        labels.push('AM');
+      } else if (displayPeriod === 'pm') {
+        labels.push('PM');
+      } else {
+        if (isFlowChecked(row.dispense_am)) labels.push('AM');
+        if (isFlowChecked(row.dispense_pm)) labels.push('PM');
+        if (isFlowChecked(row.dispense_lunch)) labels.push('Lunch');
+      }
+
+      const parts = [];
+      if (row.brand) parts.push(row.brand);
+      if (row.amount) parts.push(row.amount);
+      if (labels.length > 0) parts.push(labels.join(' + '));
+
+      return parts.join(' ').trim();
+    }).filter(Boolean);
+
+    return rowTexts.length > 0 ? rowTexts.join(' | ') : '-';
+  }
+
+  function buildMedicationDisplayText(rows, displayPeriod = null) {
+    if (!rows || rows.length === 0) {
+      return '-';
+    }
+
+    const periodKey = displayPeriod === 'am' ? 'dispense_am' : (displayPeriod === 'pm' ? 'dispense_pm' : null);
+    const rowsToRender = periodKey ? rows.filter(row => isFlowChecked(row && row[periodKey])) : rows;
+    if (rowsToRender.length === 0) {
+      return '-';
+    }
+
+    const rowTexts = rowsToRender.map(row => {
+      const labels = [];
+      if (displayPeriod === 'am') {
+        labels.push('AM');
+      } else if (displayPeriod === 'pm') {
+        labels.push('PM');
+      } else {
+        if (isFlowChecked(row.dispense_am)) labels.push('AM');
+        if (isFlowChecked(row.dispense_pm)) labels.push('PM');
+        if (isFlowChecked(row.dispense_rest)) labels.push('Rest');
+        if (isFlowChecked(row.dispense_before_bed)) labels.push('Before Bed');
+        if (isFlowChecked(row.dispense_custom_time)) {
+          labels.push(row.custom_time ? `Custom Time (${row.custom_time})` : 'Custom Time');
+        }
+      }
+
+      const parts = [];
+      if (row.name) parts.push(row.name);
+      if (row.amount) parts.push(row.amount);
+      if (labels.length > 0) parts.push(labels.join(' + '));
+
+      return parts.join(' ').trim();
+    }).filter(Boolean);
+
+    return rowTexts.length > 0 ? rowTexts.join(' | ') : '-';
+  }
+
   function renderPetDetailsTable(data) {
     let html = '';
 
@@ -981,15 +1096,15 @@
     if (isAmFood || isPmFood || isAmMeds || isPmMeds) {
       filteredData = filteredData.filter(item => {
         const flows = (item.checkin || {}).flows || {};
-        const dryFood = flows.dry_food || {};
-        const wetFood = flows.wet_food || {};
-        const meds = flows.meds || {};
-        const dryAm = dryFood.dispense_am === true || dryFood.dispense_am === 'true';
-        const dryPm = dryFood.dispense_pm === true || dryFood.dispense_pm === 'true';
-        const wetAm = wetFood.dispense_am === true || wetFood.dispense_am === 'true';
-        const wetPm = wetFood.dispense_pm === true || wetFood.dispense_pm === 'true';
-        const medsAm = meds.dispense_am === true || meds.dispense_am === 'true';
-        const medsPm = meds.dispense_pm === true || meds.dispense_pm === 'true';
+        const dryFoodRows = getFoodRowsFromFlows(flows, 'dry');
+        const wetFoodRows = getFoodRowsFromFlows(flows, 'wet');
+        const medicationRows = getMedicationRowsFromFlows(flows);
+        const dryAm = hasFoodDispense(dryFoodRows, 'dispense_am');
+        const dryPm = hasFoodDispense(dryFoodRows, 'dispense_pm');
+        const wetAm = hasFoodDispense(wetFoodRows, 'dispense_am');
+        const wetPm = hasFoodDispense(wetFoodRows, 'dispense_pm');
+        const medsAm = hasMedicationDispense(medicationRows, 'dispense_am');
+        const medsPm = hasMedicationDispense(medicationRows, 'dispense_pm');
         if (isAmFood) return dryAm || wetAm;
         if (isPmFood) return dryPm || wetPm;
         if (isAmMeds) return medsAm;
@@ -1030,42 +1145,14 @@
     filteredData.forEach(item => {
       const checkin = item.checkin || {};
       const flows = checkin.flows || {};
-      const dryFood = flows.dry_food || {};
-      const wetFood = flows.wet_food || {};
-      const meds = flows.meds || {};
+      const dryFoodRows = getFoodRowsFromFlows(flows, 'dry');
+      const wetFoodRows = getFoodRowsFromFlows(flows, 'wet');
+      const medicationRows = getMedicationRowsFromFlows(flows);
+      const displayPeriod = currentTab === 'am-feeding-meds' ? 'am' : (currentTab === 'pm-feeding-meds' ? 'pm' : null);
 
-      const dryFoodDispense = [];
-      if (dryFood.dispense_am === true || dryFood.dispense_am === 'true') dryFoodDispense.push('AM');
-      if (dryFood.dispense_pm === true || dryFood.dispense_pm === 'true') dryFoodDispense.push('PM');
-      const dryFoodDispenseText = dryFoodDispense.length > 0 ? dryFoodDispense.join(' + ') : '-';
-
-      const wetFoodDispense = [];
-      if (wetFood.dispense_am === true || wetFood.dispense_am === 'true') wetFoodDispense.push('AM');
-      if (wetFood.dispense_pm === true || wetFood.dispense_pm === 'true') wetFoodDispense.push('PM');
-      const wetFoodDispenseText = wetFoodDispense.length > 0 ? wetFoodDispense.join(' + ') : '-';
-
-      const medsDispense = [];
-      if (meds.dispense_am === true || meds.dispense_am === 'true') medsDispense.push('AM');
-      if (meds.dispense_pm === true || meds.dispense_pm === 'true') medsDispense.push('PM');
-      const medsDispenseText = medsDispense.length > 0 ? medsDispense.join(' + ') : '-';
-
-      const dryFoodParts = [];
-      if (dryFood.brand) dryFoodParts.push(dryFood.brand);
-      if (dryFood.amount) dryFoodParts.push(dryFood.amount);
-      if (dryFoodDispenseText !== '-') dryFoodParts.push(dryFoodDispenseText);
-      const dryFoodHtml = dryFoodParts.length > 0 ? dryFoodParts.join(' ') : '-';
-
-      const wetFoodParts = [];
-      if (wetFood.brand) wetFoodParts.push(wetFood.brand);
-      if (wetFood.amount) wetFoodParts.push(wetFood.amount);
-      if (wetFoodDispenseText !== '-') wetFoodParts.push(wetFoodDispenseText);
-      const wetFoodHtml = wetFoodParts.length > 0 ? wetFoodParts.join(' ') : '-';
-
-      const medsParts = [];
-      if (meds.name) medsParts.push(meds.name);
-      if (meds.amount) medsParts.push(meds.amount);
-      if (medsDispenseText !== '-') medsParts.push(medsDispenseText);
-      const medsHtml = medsParts.length > 0 ? medsParts.join(' ') : '-';
+      const dryFoodHtml = buildFoodDisplayText(dryFoodRows, displayPeriod);
+      const wetFoodHtml = buildFoodDisplayText(wetFoodRows, displayPeriod);
+      const medsHtml = buildMedicationDisplayText(medicationRows, displayPeriod);
 
       const savedData = workflowData[currentProcessItem];
       const savedPetIds = savedData && savedData.selected_pet_ids ? savedData.selected_pet_ids.map(id => parseInt(id)) : [];
@@ -1343,9 +1430,9 @@
         const savedOption = savedPetData.option || '';
         const savedDetail = savedPetData.detail || '';
         const savedAssignRest = savedPetData.assign_rest === true || savedPetData.assign_rest === 'true' || savedPetData.assign_rest === 1 || savedPetData.assign_rest === '1';
-        const savedAdditionalOption = Array.isArray(savedPetData.additional_options)
-          ? (savedPetData.additional_options[0] || '')
-          : (savedPetData.additional_option || savedPetData.additional_options || '');
+        const savedAdditionalOptions = Array.isArray(savedPetData.additional_options)
+          ? savedPetData.additional_options
+          : (savedPetData.additional_option ? [savedPetData.additional_option] : []);
         
         bodyHtml += `<tr class="hover:bg-base-200" data-appointment-id="${appointmentId}">`;
         
@@ -1393,14 +1480,13 @@
         `;
 
         const additionalOptionsHtml = treatmentMultiOptions.map(option => {
-          const selected = savedAdditionalOption === option ? 'selected' : '';
+          const selected = savedAdditionalOptions.includes(option) ? 'selected' : '';
           return `<option value="${option}" ${selected}>${option}</option>`;
         }).join('');
 
         bodyHtml += `
           <td>
-            <select id="treatment_multi_${appointmentId}" class="select select-bordered select-sm w-full treatment-plan-select">
-              <option value=""></option>
+            <select id="treatment_multi_${appointmentId}" class="select select-bordered select-sm w-full treatment-plan-select" multiple>
               ${additionalOptionsHtml}
             </select>
           </td>
@@ -1429,18 +1515,19 @@
     $('#treatment_plan_tbody').html(bodyHtml);
 
     $('.treatment-plan-select').select2({
-      placeholder: 'Select the treatment',
+      placeholder: 'Select treatments',
       allowClear: true,
+      multiple: true,
       width: '100%'
     });
-    // Restore saved Select2 values (Select2 with allowClear doesn't honour 'selected' attr after init)
+    // Restore saved Select2 values (Select2 doesn't honour 'selected' attr after init)
     petsWithIssues.forEach(function(appointmentId) {
       const savedPetDataRestore = savedTreatmentData[appointmentId] || {};
-      const savedAdditionalOptionRestore = Array.isArray(savedPetDataRestore.additional_options)
-        ? (savedPetDataRestore.additional_options[0] || '')
-        : (savedPetDataRestore.additional_option || savedPetDataRestore.additional_options || '');
-      if (savedAdditionalOptionRestore) {
-        $('#treatment_multi_' + appointmentId).val(savedAdditionalOptionRestore).trigger('change');
+      const savedAdditionalOptionsRestore = Array.isArray(savedPetDataRestore.additional_options)
+        ? savedPetDataRestore.additional_options
+        : (savedPetDataRestore.additional_option ? [savedPetDataRestore.additional_option] : []);
+      if (savedAdditionalOptionsRestore.length) {
+        $('#treatment_multi_' + appointmentId).val(savedAdditionalOptionsRestore).trigger('change');
       }
     });
     return true;
@@ -1808,26 +1895,10 @@
           const customerAvatarUrl = pet.customer_avatar ? '{{ asset("storage/profiles/") }}/' + pet.customer_avatar : '{{ asset("images/default-user-avatar.png") }}';
           const item = checkinMap[appointmentId];
           const flows = (item && item.checkin) ? (item.checkin.flows || {}) : {};
-          const dryFood = flows.dry_food || {};
-          const wetFood = flows.wet_food || {};
-          const dryFoodDispense = [];
-          if (dryFood.dispense_am === true || dryFood.dispense_am === 'true') dryFoodDispense.push('AM');
-          if (dryFood.dispense_pm === true || dryFood.dispense_pm === 'true') dryFoodDispense.push('PM');
-          const dryFoodDispenseText = dryFoodDispense.length > 0 ? dryFoodDispense.join(' + ') : '-';
-          const dryFoodParts = [];
-          if (dryFood.brand) dryFoodParts.push(dryFood.brand);
-          if (dryFood.amount) dryFoodParts.push(dryFood.amount);
-          if (dryFoodDispenseText !== '-') dryFoodParts.push(dryFoodDispenseText);
-          const dryFoodHtml = dryFoodParts.length > 0 ? dryFoodParts.join(' ') : '-';
-          const wetFoodDispense = [];
-          if (wetFood.dispense_am === true || wetFood.dispense_am === 'true') wetFoodDispense.push('AM');
-          if (wetFood.dispense_pm === true || wetFood.dispense_pm === 'true') wetFoodDispense.push('PM');
-          const wetFoodDispenseText = wetFoodDispense.length > 0 ? wetFoodDispense.join(' + ') : '-';
-          const wetFoodParts = [];
-          if (wetFood.brand) wetFoodParts.push(wetFood.brand);
-          if (wetFood.amount) wetFoodParts.push(wetFood.amount);
-          if (wetFoodDispenseText !== '-') wetFoodParts.push(wetFoodDispenseText);
-          const wetFoodHtml = wetFoodParts.length > 0 ? wetFoodParts.join(' ') : '-';
+          const dryFoodRows = getFoodRowsFromFlows(flows, 'dry');
+          const wetFoodRows = getFoodRowsFromFlows(flows, 'wet');
+          const dryFoodHtml = buildFoodDisplayText(dryFoodRows);
+          const wetFoodHtml = buildFoodDisplayText(wetFoodRows);
           const issueVal = (reportIssues[appointmentId] || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           bodyHtml += `<tr class="hover:bg-base-200 dne-list-am-row" data-appointment-id="${appointmentId}" data-pet-name="${(pet.pet_name || '').toLowerCase()}" data-customer-name="${(pet.customer_name || '').toLowerCase()}">`;
           bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${petAvatarUrl}" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.pet_name || 'N/A'}</span></div></td>`;
@@ -1873,26 +1944,10 @@
           const customerAvatarUrl = pet.customer_avatar ? '{{ asset("storage/profiles/") }}/' + pet.customer_avatar : '{{ asset("images/default-user-avatar.png") }}';
           const item = checkinMap[appointmentId];
           const flows = (item && item.checkin) ? (item.checkin.flows || {}) : {};
-          const dryFood = flows.dry_food || {};
-          const wetFood = flows.wet_food || {};
-          const dryFoodDispense = [];
-          if (dryFood.dispense_am === true || dryFood.dispense_am === 'true') dryFoodDispense.push('AM');
-          if (dryFood.dispense_pm === true || dryFood.dispense_pm === 'true') dryFoodDispense.push('PM');
-          const dryFoodDispenseText = dryFoodDispense.length > 0 ? dryFoodDispense.join(' + ') : '-';
-          const dryFoodParts = [];
-          if (dryFood.brand) dryFoodParts.push(dryFood.brand);
-          if (dryFood.amount) dryFoodParts.push(dryFood.amount);
-          if (dryFoodDispenseText !== '-') dryFoodParts.push(dryFoodDispenseText);
-          const dryFoodHtml = dryFoodParts.length > 0 ? dryFoodParts.join(' ') : '-';
-          const wetFoodDispense = [];
-          if (wetFood.dispense_am === true || wetFood.dispense_am === 'true') wetFoodDispense.push('AM');
-          if (wetFood.dispense_pm === true || wetFood.dispense_pm === 'true') wetFoodDispense.push('PM');
-          const wetFoodDispenseText = wetFoodDispense.length > 0 ? wetFoodDispense.join(' + ') : '-';
-          const wetFoodParts = [];
-          if (wetFood.brand) wetFoodParts.push(wetFood.brand);
-          if (wetFood.amount) wetFoodParts.push(wetFood.amount);
-          if (wetFoodDispenseText !== '-') wetFoodParts.push(wetFoodDispenseText);
-          const wetFoodHtml = wetFoodParts.length > 0 ? wetFoodParts.join(' ') : '-';
+          const dryFoodRows = getFoodRowsFromFlows(flows, 'dry');
+          const wetFoodRows = getFoodRowsFromFlows(flows, 'wet');
+          const dryFoodHtml = buildFoodDisplayText(dryFoodRows);
+          const wetFoodHtml = buildFoodDisplayText(wetFoodRows);
           const issueVal = (reportIssues[appointmentId] || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           bodyHtml += `<tr class="hover:bg-base-200 dne-list-pm-row" data-appointment-id="${appointmentId}" data-pet-name="${(pet.pet_name || '').toLowerCase()}" data-customer-name="${(pet.customer_name || '').toLowerCase()}">`;
           bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${petAvatarUrl}" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.pet_name || 'N/A'}</span></div></td>`;
@@ -1930,7 +1985,8 @@
     $('#dne_list_search_bar').hide();
     $('#rest_nose_to_tail_inline').hide();
     $('#empty_state_message').hide();
-    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 180px;">Pet</th><th style="min-width: 180px;">Customer</th><th style="min-width: 200px;">Source</th><th style="min-width: 120px;">Meals (Dry or Wet)</th><th style="min-width: 80px;">Amount</th><th style="min-width: 200px;">Issue</th></tr>');
+    const savedLunchNotes = (workflowData['lunch_tlr'] || {}).notes || {};
+    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 180px;">Pet</th><th style="min-width: 180px;">Customer</th><th style="min-width: 200px;">Source</th><th style="min-width: 120px;">Meals (Dry or Wet)</th><th style="min-width: 80px;">Amount</th><th style="min-width: 200px;">Issue</th><th style="min-width: 220px;">Notes</th></tr>');
     let bodyHtml = '';
     if (lunchIds.length === 0) {
       $('#treatment_lunch_rest_form_container').hide();
@@ -1964,17 +2020,21 @@
 
         const item = checkinMap[appointmentId];
         const flows = (item && item.checkin) ? (item.checkin.flows || {}) : {};
-        const dryFood = flows.dry_food || {};
-        const wetFood = flows.wet_food || {};
+        const dryFoodRows = getFoodRowsFromFlows(flows, 'dry');
+        const wetFoodRows = getFoodRowsFromFlows(flows, 'wet');
         const mealTypes = [];
         const amounts = [];
-        if (dryFood.brand || dryFood.amount) {
+        if (dryFoodRows.length > 0) {
           mealTypes.push('Dry');
-          if (dryFood.amount) amounts.push(dryFood.amount);
+          dryFoodRows.forEach(row => {
+            if (row.amount) amounts.push(row.amount);
+          });
         }
-        if (wetFood.brand || wetFood.amount) {
+        if (wetFoodRows.length > 0) {
           mealTypes.push('Wet');
-          if (wetFood.amount) amounts.push(wetFood.amount);
+          wetFoodRows.forEach(row => {
+            if (row.amount) amounts.push(row.amount);
+          });
         }
         const mealsText = mealTypes.length > 0 ? mealTypes.join(' or ') : '-';
         const amountText = amounts.length > 0 ? amounts.join(' / ') : '-';
@@ -1988,7 +2048,9 @@
         bodyHtml += `<td><span class="text-sm">${sourceText}</span></td>`;
         bodyHtml += `<td><span class="text-sm">${mealsText}</span></td>`;
         bodyHtml += `<td><span class="text-sm">${amountText}</span></td>`;
+        const savedNote = (savedLunchNotes[appointmentId] || savedLunchNotes[String(appointmentId)] || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         bodyHtml += `<td><span class="text-sm">${issueVal || '—'}</span></td>`;
+        bodyHtml += `<td><textarea id="lunch_note_${appointmentId}" class="textarea textarea-bordered textarea-sm w-full" rows="2" style="min-height: 2rem;" placeholder="Notes...">${savedNote}</textarea></td>`;
         bodyHtml += '</tr>';
       });
     }
@@ -2282,13 +2344,13 @@
         if (!pet) return;
         
         const option = $(`input[name="treatment_option_${appointmentId}"]:checked`).val() || '';
-        const additionalOption = $(`#treatment_multi_${appointmentId}`).val() || '';
+        const additionalOptions = $(`#treatment_multi_${appointmentId}`).val() || [];
         const detail = $(`#treatment_detail_${appointmentId}`).val() || '';
         const assignRest = $(`#assign_rest_${appointmentId}`).is(':checked');
         
         treatmentPlanData[appointmentId] = {
           option: option,
-          additional_options: additionalOption ? [additionalOption] : [],
+          additional_options: Array.isArray(additionalOptions) ? additionalOptions : (additionalOptions ? [additionalOptions] : []),
           detail: detail,
           assign_rest: assignRest
         };
@@ -2312,6 +2374,12 @@
       if (!workflowData[currentProcessItem]) workflowData[currentProcessItem] = {};
       workflowData[currentProcessItem].selected_pet_ids = lunchPetIds;
       workflowData[currentProcessItem].process_type = 'lunch_tlr';
+      const lunchNotes = {};
+      lunchPetIds.forEach(function(aid) {
+        const note = $('#lunch_note_' + aid).val() || '';
+        if (note) lunchNotes[aid] = note;
+      });
+      workflowData[currentProcessItem].notes = lunchNotes;
     } else if (currentProcessItem === 'treatment_list_tlr') {
       const treatmentListBasePetIds = getTreatmentListBasePetIds();
       const checkPetDataForTime = workflowData['check_pet'] || {};

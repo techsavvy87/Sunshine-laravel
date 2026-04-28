@@ -1402,124 +1402,276 @@
 
                 <div>
                   <p class="font-semibold mb-2 text-base">Feeding and Medication Information</p>
+                  @php
+                    $flows = ($checkedIn && $checkedIn->flows) ? $checkedIn->flows : [];
+                  @endphp
                   <div class="space-y-4 ms-2">
                     <div class="border-b border-base-300 pb-4">
-                      <p class="font-medium mb-2 font-bold">Dry Food</p>
-                      <div class="space-y-2 ms-2">
-                    <div>
-                          <p class="text-sm mb-1">Brand:</p>
-                          <input type="text" id="boarding_dry_food_brand" class="input input-bordered w-full input-sm"
-                            placeholder="Enter dry food brand"
-                            value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['dry_food']['brand']) ? $checkedIn->flows['dry_food']['brand'] : '' }}" />
-                    </div>
-                    <div class="flex items-end gap-4">
-                            <div class="flex-1">
-                              <p class="text-sm mb-1">Amount:</p>
-                              <input type="text" id="boarding_dry_food_amount" class="input input-bordered w-full input-sm"
-                                placeholder="e.g., 1 cup, 1/2 cup"
-                                value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['dry_food']['amount']) ? $checkedIn->flows['dry_food']['amount'] : '' }}" />
+                      <div class="flex items-center justify-between mb-2">
+                        <p class="font-bold">Dry Food</p>
+                        <button type="button" class="btn btn-primary btn-sm" id="add_boarding_dry_food">
+                          <span class="iconify lucide--plus size-4"></span>
+                          Add Dry
+                        </button>
+                      </div>
+                      @php
+                        $dryFoodRows = [];
+                        if (isset($flows['dry_food_list']) && is_array($flows['dry_food_list']) && count($flows['dry_food_list']) > 0) {
+                          $dryFoodRows = $flows['dry_food_list'];
+                        } else {
+                          $dryFoodRows[] = [
+                            'brand' => $flows['dry_food']['brand'] ?? '',
+                            'amount' => $flows['dry_food']['amount'] ?? '',
+                            'dispense_am' => !empty($flows['dry_food']['dispense_am']) && ($flows['dry_food']['dispense_am'] === true || $flows['dry_food']['dispense_am'] === 'true'),
+                            'dispense_pm' => !empty($flows['dry_food']['dispense_pm']) && ($flows['dry_food']['dispense_pm'] === true || $flows['dry_food']['dispense_pm'] === 'true'),
+                            'dispense_lunch' => !empty($flows['dry_food']['dispense_lunch']) && ($flows['dry_food']['dispense_lunch'] === true || $flows['dry_food']['dispense_lunch'] === 'true'),
+                          ];
+                        }
+                      @endphp
+                      <div class="space-y-3 ms-2" id="boarding_dry_food_container">
+                        @foreach($dryFoodRows as $index => $dryFoodRow)
+                          @php
+                            $rowDryAm = !empty($dryFoodRow['dispense_am']) && ($dryFoodRow['dispense_am'] === true || $dryFoodRow['dispense_am'] === 'true');
+                            $rowDryPm = !empty($dryFoodRow['dispense_pm']) && ($dryFoodRow['dispense_pm'] === true || $dryFoodRow['dispense_pm'] === 'true');
+                            $rowDryLunch = !empty($dryFoodRow['dispense_lunch']) && ($dryFoodRow['dispense_lunch'] === true || $dryFoodRow['dispense_lunch'] === 'true');
+                          @endphp
+                          <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-dry-food-row" data-row-index="{{ $index }}">
+                            <div class="flex items-center justify-between">
+                              <p class="text-sm font-medium">Dry Food #{{ $index + 1 }}</p>
+                              <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-dry-food" title="Remove dry food">
+                                <span class="iconify lucide--x size-4 text-error"></span>
+                              </button>
                             </div>
-                            <div class="flex-1 pb-2">
-                              <p class="text-sm mb-1">Dispense:</p>
-                              <div class="flex items-center gap-3 flex-wrap">
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_dry_food_dispense_am"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['dry_food']['dispense_am']) && ($checkedIn->flows['dry_food']['dispense_am'] === true || $checkedIn->flows['dry_food']['dispense_am'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">AM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_dry_food_dispense_pm"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['dry_food']['dispense_pm']) && ($checkedIn->flows['dry_food']['dispense_pm'] === true || $checkedIn->flows['dry_food']['dispense_pm'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">PM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_dry_food_dispense_lunch"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['dry_food']['dispense_lunch']) && ($checkedIn->flows['dry_food']['dispense_lunch'] === true || $checkedIn->flows['dry_food']['dispense_lunch'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">Lunch</span>
-                                </label>
+                            <div>
+                              <p class="text-sm mb-1">Brand:</p>
+                              <input type="text" class="input input-bordered w-full input-sm boarding-dry-food-brand"
+                                placeholder="Enter dry food brand"
+                                value="{{ $dryFoodRow['brand'] ?? '' }}" />
+                            </div>
+                            <div class="flex items-end gap-4">
+                              <div class="flex-1">
+                                <p class="text-sm mb-1">Amount:</p>
+                                <input type="text" class="input input-bordered w-full input-sm boarding-dry-food-amount"
+                                  placeholder="e.g., 1 cup, 1/2 cup"
+                                  value="{{ $dryFoodRow['amount'] ?? '' }}" />
+                              </div>
+                              <div class="flex-1 pb-2">
+                                <p class="text-sm mb-1">Dispense:</p>
+                                <div class="flex items-center gap-3 flex-wrap">
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-am" {{ $rowDryAm ? 'checked' : '' }} />
+                                    <span class="text-sm">AM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-pm" {{ $rowDryPm ? 'checked' : '' }} />
+                                    <span class="text-sm">PM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-lunch" {{ $rowDryLunch ? 'checked' : '' }} />
+                                    <span class="text-sm">Lunch</span>
+                                  </label>
+                                </div>
                               </div>
                             </div>
                           </div>
-                    </div>
+                        @endforeach
+                      </div>
                     </div>
 
                     <div class="border-b border-base-300 pb-4">
-                      <p class="font-medium mb-2 font-bold">Wet Food</p>
-                      <div class="space-y-2 ms-2">
-                    <div>
-                          <p class="text-sm mb-1">Brand:</p>
-                          <input type="text" id="boarding_wet_food_brand" class="input input-bordered w-full input-sm"
-                            placeholder="Enter wet food brand"
-                            value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['wet_food']['brand']) ? $checkedIn->flows['wet_food']['brand'] : '' }}" />
-                    </div>
-                    <div class="flex items-end gap-4">
-                            <div class="flex-1">
-                              <p class="text-sm mb-1">Amount:</p>
-                              <input type="text" id="boarding_wet_food_amount" class="input input-bordered w-full input-sm"
-                                placeholder="e.g., 2 Tbsp, 1 container"
-                                value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['wet_food']['amount']) ? $checkedIn->flows['wet_food']['amount'] : '' }}" />
+                      <div class="flex items-center justify-between mb-2">
+                        <p class="font-bold">Wet Food</p>
+                        <button type="button" class="btn btn-primary btn-sm" id="add_boarding_wet_food">
+                          <span class="iconify lucide--plus size-4"></span>
+                          Add Wet
+                        </button>
+                      </div>
+                      @php
+                        $wetFoodRows = [];
+                        if (isset($flows['wet_food_list']) && is_array($flows['wet_food_list']) && count($flows['wet_food_list']) > 0) {
+                          $wetFoodRows = $flows['wet_food_list'];
+                        } else {
+                          $wetFoodRows[] = [
+                            'brand' => $flows['wet_food']['brand'] ?? '',
+                            'amount' => $flows['wet_food']['amount'] ?? '',
+                            'dispense_am' => !empty($flows['wet_food']['dispense_am']) && ($flows['wet_food']['dispense_am'] === true || $flows['wet_food']['dispense_am'] === 'true'),
+                            'dispense_pm' => !empty($flows['wet_food']['dispense_pm']) && ($flows['wet_food']['dispense_pm'] === true || $flows['wet_food']['dispense_pm'] === 'true'),
+                            'dispense_lunch' => !empty($flows['wet_food']['dispense_lunch']) && ($flows['wet_food']['dispense_lunch'] === true || $flows['wet_food']['dispense_lunch'] === 'true'),
+                          ];
+                        }
+                      @endphp
+                      <div class="space-y-3 ms-2" id="boarding_wet_food_container">
+                        @foreach($wetFoodRows as $index => $wetFoodRow)
+                          @php
+                            $rowWetAm = !empty($wetFoodRow['dispense_am']) && ($wetFoodRow['dispense_am'] === true || $wetFoodRow['dispense_am'] === 'true');
+                            $rowWetPm = !empty($wetFoodRow['dispense_pm']) && ($wetFoodRow['dispense_pm'] === true || $wetFoodRow['dispense_pm'] === 'true');
+                            $rowWetLunch = !empty($wetFoodRow['dispense_lunch']) && ($wetFoodRow['dispense_lunch'] === true || $wetFoodRow['dispense_lunch'] === 'true');
+                          @endphp
+                          <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-wet-food-row" data-row-index="{{ $index }}">
+                            <div class="flex items-center justify-between">
+                              <p class="text-sm font-medium">Wet Food #{{ $index + 1 }}</p>
+                              <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-wet-food" title="Remove wet food">
+                                <span class="iconify lucide--x size-4 text-error"></span>
+                              </button>
                             </div>
-                            <div class="flex-1 pb-2">
-                              <p class="text-sm mb-1">Dispense:</p>
-                              <div class="flex items-center gap-3 flex-wrap">
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_wet_food_dispense_am"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['wet_food']['dispense_am']) && ($checkedIn->flows['wet_food']['dispense_am'] === true || $checkedIn->flows['wet_food']['dispense_am'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">AM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_wet_food_dispense_pm"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['wet_food']['dispense_pm']) && ($checkedIn->flows['wet_food']['dispense_pm'] === true || $checkedIn->flows['wet_food']['dispense_pm'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">PM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_wet_food_dispense_lunch"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['wet_food']['dispense_lunch']) && ($checkedIn->flows['wet_food']['dispense_lunch'] === true || $checkedIn->flows['wet_food']['dispense_lunch'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">Lunch</span>
-                                </label>
+                            <div>
+                              <p class="text-sm mb-1">Brand:</p>
+                              <input type="text" class="input input-bordered w-full input-sm boarding-wet-food-brand"
+                                placeholder="Enter wet food brand"
+                                value="{{ $wetFoodRow['brand'] ?? '' }}" />
+                            </div>
+                            <div class="flex items-end gap-4">
+                              <div class="flex-1">
+                                <p class="text-sm mb-1">Amount:</p>
+                                <input type="text" class="input input-bordered w-full input-sm boarding-wet-food-amount"
+                                  placeholder="e.g., 2 Tbsp, 1 container"
+                                  value="{{ $wetFoodRow['amount'] ?? '' }}" />
+                              </div>
+                              <div class="flex-1 pb-2">
+                                <p class="text-sm mb-1">Dispense:</p>
+                                <div class="flex items-center gap-3 flex-wrap">
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-am" {{ $rowWetAm ? 'checked' : '' }} />
+                                    <span class="text-sm">AM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-pm" {{ $rowWetPm ? 'checked' : '' }} />
+                                    <span class="text-sm">PM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-lunch" {{ $rowWetLunch ? 'checked' : '' }} />
+                                    <span class="text-sm">Lunch</span>
+                                  </label>
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
+                        @endforeach
                       </div>
+                    </div>
 
                       <div>
-                        <p class="font-medium mb-2 font-bold">Medications</p>
-                        <div class="space-y-2 ms-2">
-                          <div>
-                            <p class="text-sm mb-1">Name:</p>
-                            <input type="text" id="boarding_meds_name" class="input input-bordered w-full input-sm"
-                              placeholder="Enter medication name"
-                              value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['meds']['name']) ? $checkedIn->flows['meds']['name'] : '' }}" />
-                          </div>
-                          <div class="flex items-end gap-4">
-                            <div class="flex-1">
-                              <p class="text-sm mb-1">Amount:</p>
-                              <input type="text" id="boarding_meds_amount" class="input input-bordered w-full input-sm"
-                                placeholder="e.g., 1 pill, 2 drops left ear"
-                                value="{{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['meds']['amount']) ? $checkedIn->flows['meds']['amount'] : '' }}" />
-                            </div>
-                            <div class="flex-1 pb-2">
-                              <p class="text-sm mb-1">Dispense:</p>
-                              <div class="flex items-center gap-3 flex-wrap">
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_meds_dispense_am"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['meds']['dispense_am']) && ($checkedIn->flows['meds']['dispense_am'] === true || $checkedIn->flows['meds']['dispense_am'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">AM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_meds_dispense_pm"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['meds']['dispense_pm']) && ($checkedIn->flows['meds']['dispense_pm'] === true || $checkedIn->flows['meds']['dispense_pm'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">PM</span>
-                                </label>
-                                <label class="flex items-center gap-2">
-                                  <input type="checkbox" class="checkbox checkbox-xs" id="boarding_meds_dispense_rest"
-                                    {{ $checkedIn && $checkedIn->flows && isset($checkedIn->flows['meds']['dispense_rest']) && ($checkedIn->flows['meds']['dispense_rest'] === true || $checkedIn->flows['meds']['dispense_rest'] === 'true') ? 'checked' : '' }} />
-                                  <span class="text-sm">Rest</span>
-                                </label>
+                        <div class="flex items-center justify-between mb-2">
+                          <p class="font-medium font-bold">Medications</p>
+                          <button type="button" class="btn btn-primary btn-sm" id="add_boarding_medication">
+                            <span class="iconify lucide--plus size-4"></span>
+                            Add Medication
+                          </button>
+                        </div>
+                        @php
+                          $medicationRows = [];
+
+                          if (isset($flows['meds_list']) && is_array($flows['meds_list']) && count($flows['meds_list']) > 0) {
+                            $medicationRows = $flows['meds_list'];
+                          } elseif (isset($flows['meds']) && is_array($flows['meds'])) {
+                            $medicationRows[] = [
+                              'name' => $flows['meds']['name'] ?? '',
+                              'amount' => $flows['meds']['amount'] ?? '',
+                              'dispense_am' => !empty($flows['meds']['dispense_am']) && ($flows['meds']['dispense_am'] === true || $flows['meds']['dispense_am'] === 'true'),
+                              'dispense_pm' => !empty($flows['meds']['dispense_pm']) && ($flows['meds']['dispense_pm'] === true || $flows['meds']['dispense_pm'] === 'true'),
+                              'dispense_rest' => !empty($flows['meds']['dispense_rest']) && ($flows['meds']['dispense_rest'] === true || $flows['meds']['dispense_rest'] === 'true'),
+                              'dispense_before_bed' => false,
+                              'dispense_custom_time' => false,
+                              'meal_condition' => null,
+                              'custom_time' => '',
+                            ];
+                          }
+
+                          if (count($medicationRows) === 0) {
+                            $medicationRows[] = [
+                              'name' => '',
+                              'amount' => '',
+                              'dispense_am' => false,
+                              'dispense_pm' => false,
+                              'dispense_rest' => false,
+                              'dispense_before_bed' => false,
+                              'dispense_custom_time' => false,
+                              'meal_condition' => null,
+                              'custom_time' => '',
+                            ];
+                          }
+                        @endphp
+                        <div class="space-y-3 ms-2" id="boarding_meds_container">
+                          @foreach($medicationRows as $index => $medicationRow)
+                            @php
+                              $rowMealCondition = $medicationRow['meal_condition'] ?? ($medicationRow['condition'] ?? '');
+                              if ($rowMealCondition === 'after_meals') {
+                                $rowMealCondition = 'after_meal';
+                              }
+                              $rowDispenseAm = !empty($medicationRow['dispense_am']) && ($medicationRow['dispense_am'] === true || $medicationRow['dispense_am'] === 'true');
+                              $rowDispensePm = !empty($medicationRow['dispense_pm']) && ($medicationRow['dispense_pm'] === true || $medicationRow['dispense_pm'] === 'true');
+                              $rowDispenseRest = !empty($medicationRow['dispense_rest']) && ($medicationRow['dispense_rest'] === true || $medicationRow['dispense_rest'] === 'true');
+                              $rowDispenseBeforeBed = !empty($medicationRow['dispense_before_bed']) && ($medicationRow['dispense_before_bed'] === true || $medicationRow['dispense_before_bed'] === 'true');
+                              $rowDispenseCustomTime = !empty($medicationRow['dispense_custom_time']) && ($medicationRow['dispense_custom_time'] === true || $medicationRow['dispense_custom_time'] === 'true');
+                              if (($medicationRow['condition'] ?? '') === 'custom_time') {
+                                $rowDispenseCustomTime = true;
+                              }
+                              if (($medicationRow['condition'] ?? '') === 'before_sleep') {
+                                $rowDispenseBeforeBed = true;
+                              }
+                              $rowCustomTime = $medicationRow['custom_time'] ?? '';
+                            @endphp
+                            <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-med-row" data-row-index="{{ $index }}">
+                              <div class="flex items-center justify-between">
+                                <p class="text-sm font-medium">Medication #{{ $index + 1 }}</p>
+                                <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-medication" title="Remove medication">
+                                  <span class="iconify lucide--x size-4 text-error"></span>
+                                </button>
+                              </div>
+                              <div>
+                                <p class="text-sm mb-1">Medication Name:</p>
+                                <input type="text" class="input input-bordered w-full input-sm boarding-med-name"
+                                  placeholder="Enter medication name"
+                                  value="{{ $medicationRow['name'] ?? '' }}" />
+                              </div>
+                              <div>
+                                <p class="text-sm mb-1">Dosage/Instruction:</p>
+                                <input type="text" class="input input-bordered w-full input-sm boarding-med-amount"
+                                  placeholder="e.g., 1 pill, 2 drops left ear"
+                                  value="{{ $medicationRow['amount'] ?? '' }}" />
+                              </div>
+                              <div>
+                                <p class="text-sm mb-1">Dispense:</p>
+                                <div class="flex items-center gap-3 flex-wrap">
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-am" {{ $rowDispenseAm ? 'checked' : '' }} />
+                                    <span class="text-sm">AM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-pm" {{ $rowDispensePm ? 'checked' : '' }} />
+                                    <span class="text-sm">PM</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-rest" {{ $rowDispenseRest ? 'checked' : '' }} />
+                                    <span class="text-sm">Rest</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-before-bed" {{ $rowDispenseBeforeBed ? 'checked' : '' }} />
+                                    <span class="text-sm">Before Bed</span>
+                                  </label>
+                                  <label class="flex items-center gap-2">
+                                    <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-custom-time" {{ $rowDispenseCustomTime ? 'checked' : '' }} />
+                                    <span class="text-sm">Custom Time</span>
+                                  </label>
+                                </div>
+                              </div>
+                              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                  <p class="text-sm mb-1">Meal Condition:</p>
+                                  <select class="select select-bordered w-full select-sm boarding-med-meal-condition">
+                                    <option value="">Select option</option>
+                                    <option value="after_meal" {{ $rowMealCondition === 'after_meal' ? 'selected' : '' }}>After Meal</option>
+                                    <option value="before_meal" {{ $rowMealCondition === 'before_meal' ? 'selected' : '' }}>Before Meal</option>
+                                    <option value="empty_stomach" {{ $rowMealCondition === 'empty_stomach' ? 'selected' : '' }}>Empty Stomach</option>
+                                  </select>
+                                </div>
+                                <div class="boarding-med-custom-time-wrap {{ $rowDispenseCustomTime ? '' : 'hidden' }}">
+                                  <p class="text-sm mb-1">Custom Time:</p>
+                                  <input type="time" class="input input-bordered w-full input-sm boarding-med-custom-time" value="{{ $rowCustomTime }}" />
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          @endforeach
                         </div>
                       </div>
                     </div>
@@ -1617,6 +1769,69 @@
                     <div class="alert alert-soft alert-info">
                       <span class="iconify lucide--info size-4"></span>
                       <span>Estimated price is required before continuing. Staff assignment can be added now or later.</span>
+                    </div>
+                    <div class="border border-base-300 rounded-box p-4 space-y-4">
+                      <p class="font-semibold text-base">Boarding Agreement</p>
+                      <div class="rounded-box border border-base-300 bg-base-100 p-3 text-sm text-base-content/80 space-y-2">
+                        <p>
+                          <span class="font-medium text-base-content">Release and waiver:</span>
+                          I understand boarding activities carry inherent risks and I release the facility, its owners, and staff from liability except where prohibited by law.
+                        </p>
+                        <p>
+                          <span class="font-medium text-base-content">Authorization to treat:</span>
+                          I authorize the facility to arrange reasonable care and treatment for my pet when needed during boarding.
+                        </p>
+                        <p>
+                          <span class="font-medium text-base-content">Emergency care consent:</span>
+                          If I cannot be reached promptly, I consent to emergency veterinary care deemed necessary for my pet's welfare.
+                        </p>
+                        <p>
+                          <span class="font-medium text-base-content">Facility policy acknowledgement:</span>
+                          I acknowledge and agree to follow the facility's boarding policies, pickup requirements, and payment terms.
+                        </p>
+                      </div>
+                      @php
+                        $agreementAccepted = !empty($flows['boarding_agreement_accepted']) && ($flows['boarding_agreement_accepted'] === true || $flows['boarding_agreement_accepted'] === 'true');
+                        $vetAuthorized = !empty($flows['boarding_vet_authorized']) && ($flows['boarding_vet_authorized'] === true || $flows['boarding_vet_authorized'] === 'true');
+                      @endphp
+                      <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" id="boarding_agreement_accepted" class="checkbox checkbox-sm" {{ $agreementAccepted ? 'checked' : '' }} />
+                        <span class="label-text">I have read and agree to the boarding agreement</span>
+                      </label>
+                      <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" id="boarding_vet_authorized" class="checkbox checkbox-sm" {{ $vetAuthorized ? 'checked' : '' }} />
+                        <span class="label-text">I authorize the facility to seek veterinary treatment if needed</span>
+                      </label>
+
+                      <p class="font-semibold text-base">Owner Signature</p>
+                      <div>
+                        <p class="text-sm mb-1">Owner full name:</p>
+                        <input type="text" id="boarding_owner_full_name" class="input input-bordered w-full input-sm"
+                          placeholder="Enter owner full name"
+                          value="{{ $flows['boarding_owner_full_name'] ?? '' }}" />
+                      </div>
+                      <div>
+                        <p class="text-sm mb-1">Signature:</p>
+                        <div class="rounded-box border border-base-300 bg-base-100 p-2">
+                          <canvas id="boarding_signature_pad" width="900" height="180" class="w-full" style="height: 180px;"></canvas>
+                        </div>
+                        <input type="hidden" id="boarding_signature_data" value="{{ $flows['boarding_signature_data'] ?? '' }}" />
+                        <p class="text-xs text-error mt-1 hidden" id="boarding_signature_error">Signature is required.</p>
+                      </div>
+                      <div>
+                        <p class="text-sm mb-1">Date:</p>
+                        <input type="date" id="boarding_signature_date" class="input input-bordered w-full input-sm"
+                          value="{{ $flows['boarding_signature_date'] ?? now()->format('Y-m-d') }}" readonly />
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button type="button" class="btn btn-outline btn-sm" id="boarding_clear_signature">
+                          Clear Signature
+                        </button>
+                        <button type="button" class="btn btn-primary btn-sm" id="boarding_save_signature">
+                          Save Signature
+                        </button>
+                      </div>
+                      <p class="text-xs text-success hidden" id="boarding_signature_saved_note">Signature has been saved.</p>
                     </div>
                     <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
                       <fieldset class="fieldset">
@@ -2045,7 +2260,7 @@
                           </thead>
                           <tbody>
                             <tr data-step-id="treatments_tlr"><td class="text-sm">Treatments</td><td class="text-sm text-center w-24" data-display="time">—</td><td class="text-sm text-center w-28" data-display="employee"></td><td class="text-sm w-56 min-w-48" data-display="detail"></td></tr>
-                            <tr data-step-id="next_day_treatment_list_tlr"><td class="text-sm">Next Day's Treatment List</td><td class="text-sm text-center w-24" data-display="time">—</td><td class="text-sm text-center w-28" data-display="employee"></td><td class="text-sm w-56 min-w-48" data-display="detail"></td></tr>
+                            <tr data-step-id="next_day_treatment_list_tlr"><td class="text-sm">Next Day's Treatment</td><td class="text-sm text-center w-24" data-display="time">—</td><td class="text-sm text-center w-28" data-display="employee"></td><td class="text-sm w-56 min-w-48" data-display="detail"></td></tr>
                             <tr data-step-id="lunch_tlr"><td class="text-sm">Lunch</td><td class="text-sm text-center w-24" data-display="time">—</td><td class="text-sm text-center w-28" data-display="employee"></td><td class="text-sm w-56 min-w-48" data-display="detail"></td></tr>
                             <tr data-step-id="rest_tlr"><td class="text-sm">Rest</td><td class="text-sm text-center w-24" data-display="time">—</td><td class="text-sm text-center w-28" data-display="employee"></td><td class="text-sm w-56 min-w-48" data-display="detail"></td></tr>
                           </tbody>
@@ -2584,9 +2799,132 @@
 
     // Auto-save boarding check-in data
     @if (isBoardingService($appointment->service))
-    $('#boarding_pickup_datetime, #boarding_trip_location, #boarding_trip_phone, #boarding_alternate_contact_name, #boarding_alternate_contact_phone, #boarding_trip_notes, #boarding_vet_name, #boarding_vet_phone, input[name="boarding_vet_notification"], #boarding_health_status, #boarding_medical_issues, #boarding_flea_tick_treatment, #boarding_pet_notes, #boarding_has_leash, #boarding_has_collar, #boarding_has_other_items, #boarding_other_items_description, #boarding_dry_food_brand, #boarding_dry_food_amount, #boarding_dry_food_dispense_am, #boarding_dry_food_dispense_pm, #boarding_wet_food_brand, #boarding_wet_food_amount, #boarding_wet_food_dispense_am, #boarding_wet_food_dispense_pm, #boarding_meds_name, #boarding_meds_amount, #boarding_meds_dispense_am, #boarding_meds_dispense_pm, #boarding_meds_dispense_rest, #boarding_dry_food_dispense_lunch, #boarding_wet_food_dispense_lunch, input[name="boarding_location_type"], #boarding_location_details').on('change input', function() {
+    $('#boarding_pickup_datetime, #boarding_trip_location, #boarding_trip_phone, #boarding_alternate_contact_name, #boarding_alternate_contact_phone, #boarding_trip_notes, #boarding_vet_name, #boarding_vet_phone, input[name="boarding_vet_notification"], #boarding_health_status, #boarding_medical_issues, #boarding_flea_tick_treatment, #boarding_pet_notes, #boarding_has_leash, #boarding_has_collar, #boarding_has_other_items, #boarding_other_items_description, input[name="boarding_location_type"], #boarding_location_details').on('change input', function() {
       saveBoardingCheckinData();
     });
+
+    $('#boarding_agreement_accepted, #boarding_vet_authorized, #boarding_owner_full_name').on('change input', function() {
+      $('#boarding_signature_saved_note').addClass('hidden');
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '#boarding_clear_signature', function() {
+      clearBoardingSignaturePad();
+      $('#boarding_signature_saved_note').addClass('hidden');
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '#boarding_save_signature', function() {
+      if (!validateBoardingAgreementSignature(true)) {
+        return;
+      }
+
+      $('#boarding_signature_saved_note').removeClass('hidden');
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('change input', '.boarding-dry-food-row input', function() {
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '#add_boarding_dry_food', function() {
+      addBoardingDryFoodRow();
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '.remove-boarding-dry-food', function() {
+      const $row = $(this).closest('.boarding-dry-food-row');
+      const totalRows = $('#boarding_dry_food_container .boarding-dry-food-row').length;
+
+      if (totalRows <= 1) {
+        $row.find('.boarding-dry-food-brand').val('');
+        $row.find('.boarding-dry-food-amount').val('');
+        $row.find('.boarding-dry-food-dispense-am').prop('checked', false);
+        $row.find('.boarding-dry-food-dispense-pm').prop('checked', false);
+        $row.find('.boarding-dry-food-dispense-lunch').prop('checked', false);
+      } else {
+        $row.remove();
+        refreshBoardingDryFoodRowLabels();
+      }
+
+      updateBoardingDryFoodRemoveButtons();
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('change input', '.boarding-wet-food-row input', function() {
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '#add_boarding_wet_food', function() {
+      addBoardingWetFoodRow();
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '.remove-boarding-wet-food', function() {
+      const $row = $(this).closest('.boarding-wet-food-row');
+      const totalRows = $('#boarding_wet_food_container .boarding-wet-food-row').length;
+
+      if (totalRows <= 1) {
+        $row.find('.boarding-wet-food-brand').val('');
+        $row.find('.boarding-wet-food-amount').val('');
+        $row.find('.boarding-wet-food-dispense-am').prop('checked', false);
+        $row.find('.boarding-wet-food-dispense-pm').prop('checked', false);
+        $row.find('.boarding-wet-food-dispense-lunch').prop('checked', false);
+      } else {
+        $row.remove();
+        refreshBoardingWetFoodRowLabels();
+      }
+
+      updateBoardingWetFoodRemoveButtons();
+      saveBoardingCheckinData();
+    });
+
+    refreshBoardingDryFoodRowLabels();
+    updateBoardingDryFoodRemoveButtons();
+    refreshBoardingWetFoodRowLabels();
+    updateBoardingWetFoodRemoveButtons();
+
+    $(document).on('change input', '.boarding-med-row input, .boarding-med-row select', function() {
+      const $row = $(this).closest('.boarding-med-row');
+      toggleBoardingMedicationCustomTime($row);
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '#add_boarding_medication', function() {
+      addBoardingMedicationRow();
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('click', '.remove-boarding-medication', function() {
+      const $row = $(this).closest('.boarding-med-row');
+      const totalRows = $('#boarding_meds_container .boarding-med-row').length;
+
+      if (totalRows <= 1) {
+        $row.find('.boarding-med-name').val('');
+        $row.find('.boarding-med-amount').val('');
+        $row.find('.boarding-med-meal-condition').val('');
+        $row.find('.boarding-med-dispense-am').prop('checked', false);
+        $row.find('.boarding-med-dispense-pm').prop('checked', false);
+        $row.find('.boarding-med-dispense-rest').prop('checked', false);
+        $row.find('.boarding-med-dispense-before-bed').prop('checked', false);
+        $row.find('.boarding-med-dispense-custom-time').prop('checked', false);
+        $row.find('.boarding-med-custom-time').val('');
+        toggleBoardingMedicationCustomTime($row);
+      } else {
+        $row.remove();
+        refreshBoardingMedicationRowLabels();
+      }
+
+      updateBoardingMedicationRemoveButtons();
+      saveBoardingCheckinData();
+    });
+
+    refreshBoardingMedicationRowLabels();
+    updateBoardingMedicationRemoveButtons();
+    $('#boarding_meds_container .boarding-med-row').each(function() {
+      toggleBoardingMedicationCustomTime($(this));
+    });
+    initializeBoardingSignaturePad();
     @endif
 
     @if (isAlaCarteService($appointment->service))
@@ -3059,38 +3397,63 @@
       return;
     }
 
-    $.ajax({
-      url: '{{ route("get-validation-info") }}',
-      method: 'POST',
-      data: {
-        pet_id: '{{ $appointment->pet_id }}',
-        service_id: '{{ $appointment->service_id }}',
-      },
-      headers: {
-        'X-CSRF-TOKEN': '{{ csrf_token() }}'
-      },
-      dataType: 'json',
-      success: function(response) {
-        if (response.vaccine_status === 'expired') {
-          $('#alert_message').text('Pet vaccination is expired.');
-          alert_modal.showModal();
-          return;
-        }
+    if (isBoarding && !validateBoardingAgreementSignature(true)) {
+      return;
+    }
 
-        if (!response.vaccine_status) {
-          $('#alert_message').text('Pet vaccination records is not approved.');
-          alert_modal.showModal();
-          return;
-        }
+    const runAppointmentValidation = function() {
+      $.ajax({
+        url: '{{ route("get-validation-info") }}',
+        method: 'POST',
+        data: {
+          pet_id: '{{ $appointment->pet_id }}',
+          service_id: '{{ $appointment->service_id }}',
+        },
+        headers: {
+          'X-CSRF-TOKEN': '{{ csrf_token() }}'
+        },
+        dataType: 'json',
+        success: function(response) {
+          if (response.vaccine_status === 'expired') {
+            $('#alert_message').text('Pet vaccination is expired.');
+            alert_modal.showModal();
+            return;
+          }
 
-        submitCheckedInConfirmation(date, startTime, pickupTime, notes, estimatedPrice);
-      },
-      error: function() {
-        console.error('Failed to validate appointment details.');
-        $('#alert_message').text('An error occurred while validating the appointment. Please try again.');
-        alert_modal.showModal();
+          if (!response.vaccine_status) {
+            $('#alert_message').text('Pet vaccination records is not approved.');
+            alert_modal.showModal();
+            return;
+          }
+
+          submitCheckedInConfirmation(date, startTime, pickupTime, notes, estimatedPrice);
+        },
+        error: function() {
+          console.error('Failed to validate appointment details.');
+          $('#alert_message').text('An error occurred while validating the appointment. Please try again.');
+          alert_modal.showModal();
+        }
+      });
+    };
+
+    if (isBoarding) {
+      const saveRequest = saveBoardingCheckinData();
+
+      if (saveRequest && typeof saveRequest.done === 'function') {
+        saveRequest.done(function() {
+          runAppointmentValidation();
+        }).fail(function() {
+          $('#alert_message').text('Unable to save boarding agreement/signature. Please try again.');
+          alert_modal.showModal();
+        });
+      } else {
+        runAppointmentValidation();
       }
-    });
+
+      return;
+    }
+
+    runAppointmentValidation();
   }
 
   function submitCheckedInConfirmation(date, startTime, pickupTime, notes, estimatedPrice) {
@@ -3386,6 +3749,33 @@
   }
 
   function saveBoardingCheckinData() {
+    const medicationsList = getBoardingMedicationsData();
+    const dryFoodList = getBoardingDryFoodData();
+    const wetFoodList = getBoardingWetFoodData();
+    const hasAm = medicationsList.some(item => item.dispense_am === true);
+    const hasPm = medicationsList.some(item => item.dispense_pm === true || item.dispense_before_bed === true);
+    const hasRest = medicationsList.some(item => item.dispense_rest === true || item.dispense_before_bed === true);
+    const hasDryAm = dryFoodList.some(item => item.dispense_am === true);
+    const hasDryPm = dryFoodList.some(item => item.dispense_pm === true);
+    const hasDryLunch = dryFoodList.some(item => item.dispense_lunch === true);
+    const hasWetAm = wetFoodList.some(item => item.dispense_am === true);
+    const hasWetPm = wetFoodList.some(item => item.dispense_pm === true);
+    const hasWetLunch = wetFoodList.some(item => item.dispense_lunch === true);
+
+    const firstMedication = medicationsList.length > 0 ? medicationsList[0] : {};
+    const firstDryFood = dryFoodList.length > 0 ? dryFoodList[0] : {};
+    const firstWetFood = wetFoodList.length > 0 ? wetFoodList[0] : {};
+    const legacyMeds = {
+      name: firstMedication.name || null,
+      amount: firstMedication.amount || null,
+      dispense_am: hasAm,
+      dispense_pm: hasPm,
+      dispense_rest: hasRest
+    };
+
+    const ownerName = ($('#boarding_owner_full_name').val() || '').trim();
+    const signatureData = $('#boarding_signature_data').val() || null;
+
     const boardingData = {
       // Trip Information
       pickup_datetime: $('#boarding_pickup_datetime').val() || null,
@@ -3408,27 +3798,50 @@
       has_other_items: $('#boarding_has_other_items').is(':checked'),
       other_items_description: $('#boarding_other_items_description').val() || null,
 
+      dry_food_list: dryFoodList,
       dry_food: {
-        brand: $('#boarding_dry_food_brand').val() || null,
-        amount: $('#boarding_dry_food_amount').val() || null,
-        dispense_am: $('#boarding_dry_food_dispense_am').is(':checked'),
-        dispense_pm: $('#boarding_dry_food_dispense_pm').is(':checked'),
-        dispense_lunch: $('#boarding_dry_food_dispense_lunch').is(':checked')
+        brand: firstDryFood.brand || null,
+        amount: firstDryFood.amount || null,
+        dispense_am: hasDryAm,
+        dispense_pm: hasDryPm,
+        dispense_lunch: hasDryLunch
       },
+      wet_food_list: wetFoodList,
       wet_food: {
-        brand: $('#boarding_wet_food_brand').val() || null,
-        amount: $('#boarding_wet_food_amount').val() || null,
-        dispense_am: $('#boarding_wet_food_dispense_am').is(':checked'),
-        dispense_pm: $('#boarding_wet_food_dispense_pm').is(':checked'),
-        dispense_lunch: $('#boarding_wet_food_dispense_lunch').is(':checked')
+        brand: firstWetFood.brand || null,
+        amount: firstWetFood.amount || null,
+        dispense_am: hasWetAm,
+        dispense_pm: hasWetPm,
+        dispense_lunch: hasWetLunch
       },
-      meds: {
-        name: $('#boarding_meds_name').val() || null,
-        amount: $('#boarding_meds_amount').val() || null,
-        dispense_am: $('#boarding_meds_dispense_am').is(':checked'),
-        dispense_pm: $('#boarding_meds_dispense_pm').is(':checked'),
-        dispense_rest: $('#boarding_meds_dispense_rest').is(':checked')
-      },
+      meds: legacyMeds,
+      meds_list: medicationsList,
+      medications: medicationsList.length
+        ? medicationsList.map(item => {
+            const dispenseLabels = [];
+            if (item.dispense_am) dispenseLabels.push('AM');
+            if (item.dispense_pm) dispenseLabels.push('PM');
+            if (item.dispense_rest) dispenseLabels.push('Rest');
+            if (item.dispense_before_bed) dispenseLabels.push('Before Bed');
+            if (item.dispense_custom_time && item.custom_time) dispenseLabels.push(`Custom Time (${item.custom_time})`);
+            const mealConditionLabel = getMedicationConditionLabel(item.meal_condition);
+            const details = [
+              item.name || '',
+              item.amount || '',
+              dispenseLabels.length ? `Dispense: ${dispenseLabels.join(', ')}` : '',
+              mealConditionLabel ? `Meal Condition: ${mealConditionLabel}` : ''
+            ].filter(Boolean).join(' | ');
+            return details;
+          }).join('\n')
+        : null,
+      medications_am: hasAm,
+      medications_pm: hasPm,
+
+      boarding_agreement_accepted: $('#boarding_agreement_accepted').is(':checked'),
+      boarding_vet_authorized: $('#boarding_vet_authorized').is(':checked'),
+      boarding_owner_full_name: ownerName || null,
+      boarding_signature_data: signatureData,
+      boarding_signature_date: $('#boarding_signature_date').val() || null,
 
       // Assignment or location
       location_type: $('input[name="boarding_location_type"]:checked').val() || null,
@@ -3436,7 +3849,7 @@
     };
 
     // Send AJAX request
-    $.ajax({
+    return $.ajax({
       url: '{{ route("update-checkin-flows", $appointment->id) }}',
       method: 'POST',
       data: {
@@ -3450,6 +3863,459 @@
         console.error('Error saving boarding check-in data:', error);
       }
     });
+  }
+
+  function isTruthyBoardingValue(value) {
+    return value === true || value === 'true' || value === 1 || value === '1';
+  }
+
+  function validateBoardingAgreementSignature(showErrors = false) {
+    const isBoarding = {{ isBoardingService($appointment->service) ? 'true' : 'false' }};
+    const isCheckedIn = '{{ $appointment->status }}' === 'checked_in';
+    if (!isBoarding || !isCheckedIn) {
+      return true;
+    }
+
+    const agreementAccepted = $('#boarding_agreement_accepted').is(':checked');
+    const vetAuthorized = $('#boarding_vet_authorized').is(':checked');
+    const ownerName = ($('#boarding_owner_full_name').val() || '').trim();
+    const signatureData = $('#boarding_signature_data').val() || '';
+
+    const errors = [];
+
+    $('#boarding_agreement_accepted').toggleClass('checkbox-error', showErrors && !agreementAccepted);
+    $('#boarding_vet_authorized').toggleClass('checkbox-error', showErrors && !vetAuthorized);
+    $('#boarding_owner_full_name').toggleClass('input-error', showErrors && !ownerName);
+    $('#boarding_signature_error').toggleClass('hidden', !!signatureData);
+
+    if (!agreementAccepted) {
+      errors.push('Please confirm the boarding agreement.');
+    }
+
+    if (!vetAuthorized) {
+      errors.push('Please authorize veterinary treatment if needed.');
+    }
+
+    if (!ownerName) {
+      errors.push('Please enter the owner full name.');
+    }
+
+    if (!signatureData) {
+      errors.push('Please provide an owner signature.');
+    }
+
+    if (errors.length > 0 && showErrors) {
+      $('#alert_message').text(errors[0]);
+      alert_modal.showModal();
+    }
+
+    return errors.length === 0;
+  }
+
+  function initializeBoardingSignaturePad() {
+    const $canvas = $('#boarding_signature_pad');
+    if ($canvas.length === 0) {
+      return;
+    }
+
+    const canvas = $canvas[0];
+    const context = canvas.getContext('2d');
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.strokeStyle = '#111827';
+    context.lineWidth = 2;
+
+    let isDrawing = false;
+
+    function getCanvasPoint(event) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY,
+      };
+    }
+
+    function startDrawing(event) {
+      isDrawing = true;
+      const point = getCanvasPoint(event);
+      context.beginPath();
+      context.moveTo(point.x, point.y);
+      event.preventDefault();
+    }
+
+    function draw(event) {
+      if (!isDrawing) {
+        return;
+      }
+
+      const point = getCanvasPoint(event);
+      context.lineTo(point.x, point.y);
+      context.stroke();
+      event.preventDefault();
+    }
+
+    function stopDrawing(event) {
+      if (!isDrawing) {
+        return;
+      }
+
+      isDrawing = false;
+      context.closePath();
+      $('#boarding_signature_data').val(canvas.toDataURL('image/png'));
+      $('#boarding_signature_error').addClass('hidden');
+      $('#boarding_signature_saved_note').addClass('hidden');
+      validateBoardingAgreementSignature(false);
+
+      if (event) {
+        event.preventDefault();
+      }
+    }
+
+    canvas.onpointerdown = startDrawing;
+    canvas.onpointermove = draw;
+    canvas.onpointerup = stopDrawing;
+    canvas.onpointerleave = stopDrawing;
+    canvas.onpointercancel = stopDrawing;
+
+    const savedSignature = $('#boarding_signature_data').val();
+    if (savedSignature) {
+      const image = new Image();
+      image.onload = function() {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      };
+      image.src = savedSignature;
+    }
+
+    validateBoardingAgreementSignature(false);
+  }
+
+  function clearBoardingSignaturePad() {
+    const canvas = $('#boarding_signature_pad')[0];
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    $('#boarding_signature_data').val('');
+    $('#boarding_signature_error').removeClass('hidden');
+    validateBoardingAgreementSignature(false);
+  }
+
+  function getMedicationConditionLabel(condition) {
+    const labels = {
+      after_meal: 'After Meal',
+      before_meal: 'Before Meal',
+      empty_stomach: 'Empty Stomach'
+    };
+
+    return labels[condition] || '';
+  }
+
+  function getBoardingDryFoodData() {
+    const foods = [];
+
+    $('#boarding_dry_food_container .boarding-dry-food-row').each(function() {
+      const brand = ($(this).find('.boarding-dry-food-brand').val() || '').trim();
+      const amount = ($(this).find('.boarding-dry-food-amount').val() || '').trim();
+      const dispenseAm = $(this).find('.boarding-dry-food-dispense-am').is(':checked');
+      const dispensePm = $(this).find('.boarding-dry-food-dispense-pm').is(':checked');
+      const dispenseLunch = $(this).find('.boarding-dry-food-dispense-lunch').is(':checked');
+
+      if (!brand && !amount && !dispenseAm && !dispensePm && !dispenseLunch) {
+        return;
+      }
+
+      foods.push({
+        brand: brand || null,
+        amount: amount || null,
+        dispense_am: dispenseAm,
+        dispense_pm: dispensePm,
+        dispense_lunch: dispenseLunch
+      });
+    });
+
+    return foods;
+  }
+
+  function getBoardingWetFoodData() {
+    const foods = [];
+
+    $('#boarding_wet_food_container .boarding-wet-food-row').each(function() {
+      const brand = ($(this).find('.boarding-wet-food-brand').val() || '').trim();
+      const amount = ($(this).find('.boarding-wet-food-amount').val() || '').trim();
+      const dispenseAm = $(this).find('.boarding-wet-food-dispense-am').is(':checked');
+      const dispensePm = $(this).find('.boarding-wet-food-dispense-pm').is(':checked');
+      const dispenseLunch = $(this).find('.boarding-wet-food-dispense-lunch').is(':checked');
+
+      if (!brand && !amount && !dispenseAm && !dispensePm && !dispenseLunch) {
+        return;
+      }
+
+      foods.push({
+        brand: brand || null,
+        amount: amount || null,
+        dispense_am: dispenseAm,
+        dispense_pm: dispensePm,
+        dispense_lunch: dispenseLunch
+      });
+    });
+
+    return foods;
+  }
+
+  function refreshBoardingDryFoodRowLabels() {
+    $('#boarding_dry_food_container .boarding-dry-food-row').each(function(index) {
+      $(this).attr('data-row-index', index);
+      $(this).find('.text-sm.font-medium').first().text('Dry Food #' + (index + 1));
+    });
+  }
+
+  function refreshBoardingWetFoodRowLabels() {
+    $('#boarding_wet_food_container .boarding-wet-food-row').each(function(index) {
+      $(this).attr('data-row-index', index);
+      $(this).find('.text-sm.font-medium').first().text('Wet Food #' + (index + 1));
+    });
+  }
+
+  function updateBoardingDryFoodRemoveButtons() {
+    const totalRows = $('#boarding_dry_food_container .boarding-dry-food-row').length;
+    const shouldDisable = totalRows <= 1;
+
+    $('#boarding_dry_food_container .remove-boarding-dry-food').prop('disabled', shouldDisable);
+    $('#boarding_dry_food_container .remove-boarding-dry-food .iconify').toggleClass('text-base-content/30', shouldDisable);
+    $('#boarding_dry_food_container .remove-boarding-dry-food .iconify').toggleClass('text-error', !shouldDisable);
+  }
+
+  function updateBoardingWetFoodRemoveButtons() {
+    const totalRows = $('#boarding_wet_food_container .boarding-wet-food-row').length;
+    const shouldDisable = totalRows <= 1;
+
+    $('#boarding_wet_food_container .remove-boarding-wet-food').prop('disabled', shouldDisable);
+    $('#boarding_wet_food_container .remove-boarding-wet-food .iconify').toggleClass('text-base-content/30', shouldDisable);
+    $('#boarding_wet_food_container .remove-boarding-wet-food .iconify').toggleClass('text-error', !shouldDisable);
+  }
+
+  function addBoardingDryFoodRow() {
+    const rowIndex = $('#boarding_dry_food_container .boarding-dry-food-row').length;
+    const rowHtml = `
+      <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-dry-food-row" data-row-index="${rowIndex}">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium">Dry Food #${rowIndex + 1}</p>
+          <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-dry-food" title="Remove dry food">
+            <span class="iconify lucide--x size-4 text-error"></span>
+          </button>
+        </div>
+        <div>
+          <p class="text-sm mb-1">Brand:</p>
+          <input type="text" class="input input-bordered w-full input-sm boarding-dry-food-brand" placeholder="Enter dry food brand" />
+        </div>
+        <div class="flex items-end gap-4">
+          <div class="flex-1">
+            <p class="text-sm mb-1">Amount:</p>
+            <input type="text" class="input input-bordered w-full input-sm boarding-dry-food-amount" placeholder="e.g., 1 cup, 1/2 cup" />
+          </div>
+          <div class="flex-1 pb-2">
+            <p class="text-sm mb-1">Dispense:</p>
+            <div class="flex items-center gap-3 flex-wrap">
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-am" />
+                <span class="text-sm">AM</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-pm" />
+                <span class="text-sm">PM</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-dry-food-dispense-lunch" />
+                <span class="text-sm">Lunch</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#boarding_dry_food_container').append(rowHtml);
+    refreshBoardingDryFoodRowLabels();
+    updateBoardingDryFoodRemoveButtons();
+  }
+
+  function addBoardingWetFoodRow() {
+    const rowIndex = $('#boarding_wet_food_container .boarding-wet-food-row').length;
+    const rowHtml = `
+      <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-wet-food-row" data-row-index="${rowIndex}">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium">Wet Food #${rowIndex + 1}</p>
+          <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-wet-food" title="Remove wet food">
+            <span class="iconify lucide--x size-4 text-error"></span>
+          </button>
+        </div>
+        <div>
+          <p class="text-sm mb-1">Brand:</p>
+          <input type="text" class="input input-bordered w-full input-sm boarding-wet-food-brand" placeholder="Enter wet food brand" />
+        </div>
+        <div class="flex items-end gap-4">
+          <div class="flex-1">
+            <p class="text-sm mb-1">Amount:</p>
+            <input type="text" class="input input-bordered w-full input-sm boarding-wet-food-amount" placeholder="e.g., 2 Tbsp, 1 container" />
+          </div>
+          <div class="flex-1 pb-2">
+            <p class="text-sm mb-1">Dispense:</p>
+            <div class="flex items-center gap-3 flex-wrap">
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-am" />
+                <span class="text-sm">AM</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-pm" />
+                <span class="text-sm">PM</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" class="checkbox checkbox-xs boarding-wet-food-dispense-lunch" />
+                <span class="text-sm">Lunch</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#boarding_wet_food_container').append(rowHtml);
+    refreshBoardingWetFoodRowLabels();
+    updateBoardingWetFoodRemoveButtons();
+  }
+
+  function getBoardingMedicationsData() {
+    const medications = [];
+
+    $('#boarding_meds_container .boarding-med-row').each(function() {
+      const name = ($(this).find('.boarding-med-name').val() || '').trim();
+      const amount = ($(this).find('.boarding-med-amount').val() || '').trim();
+      const mealCondition = ($(this).find('.boarding-med-meal-condition').val() || '').trim();
+      const dispenseAm = $(this).find('.boarding-med-dispense-am').is(':checked');
+      const dispensePm = $(this).find('.boarding-med-dispense-pm').is(':checked');
+      const dispenseRest = $(this).find('.boarding-med-dispense-rest').is(':checked');
+      const dispenseBeforeBed = $(this).find('.boarding-med-dispense-before-bed').is(':checked');
+      const dispenseCustomTime = $(this).find('.boarding-med-dispense-custom-time').is(':checked');
+      const customTime = ($(this).find('.boarding-med-custom-time').val() || '').trim();
+
+      if (!name && !amount && !mealCondition && !dispenseAm && !dispensePm && !dispenseRest && !dispenseBeforeBed && !dispenseCustomTime && !customTime) {
+        return;
+      }
+
+      medications.push({
+        name: name || null,
+        amount: amount || null,
+        dispense_am: dispenseAm,
+        dispense_pm: dispensePm,
+        dispense_rest: dispenseRest,
+        dispense_before_bed: dispenseBeforeBed,
+        dispense_custom_time: dispenseCustomTime,
+        meal_condition: mealCondition || null,
+        custom_time: dispenseCustomTime ? (customTime || null) : null,
+      });
+    });
+
+    return medications;
+  }
+
+  function toggleBoardingMedicationCustomTime($row) {
+    const shouldShow = $row.find('.boarding-med-dispense-custom-time').is(':checked');
+    const $timeWrap = $row.find('.boarding-med-custom-time-wrap');
+    const $timeInput = $row.find('.boarding-med-custom-time');
+
+    if (shouldShow) {
+      $timeWrap.removeClass('hidden');
+    } else {
+      $timeWrap.addClass('hidden');
+      $timeInput.val('');
+    }
+  }
+
+  function refreshBoardingMedicationRowLabels() {
+    $('#boarding_meds_container .boarding-med-row').each(function(index) {
+      $(this).attr('data-row-index', index);
+      $(this).find('.text-sm.font-medium').first().text('Medication #' + (index + 1));
+    });
+  }
+
+  function updateBoardingMedicationRemoveButtons() {
+    const totalRows = $('#boarding_meds_container .boarding-med-row').length;
+    const shouldDisable = totalRows <= 1;
+
+    $('#boarding_meds_container .remove-boarding-medication').prop('disabled', shouldDisable);
+    $('#boarding_meds_container .remove-boarding-medication .iconify').toggleClass('text-base-content/30', shouldDisable);
+    $('#boarding_meds_container .remove-boarding-medication .iconify').toggleClass('text-error', !shouldDisable);
+  }
+
+  function addBoardingMedicationRow() {
+    const rowIndex = $('#boarding_meds_container .boarding-med-row').length;
+    const rowHtml = `
+      <div class="border border-base-300 rounded-box p-3 space-y-2 boarding-med-row" data-row-index="${rowIndex}">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-medium">Medication #${rowIndex + 1}</p>
+          <button type="button" class="btn btn-ghost btn-sm btn-circle remove-boarding-medication" title="Remove medication">
+            <span class="iconify lucide--x size-4 text-error"></span>
+          </button>
+        </div>
+        <div>
+          <p class="text-sm mb-1">Medication Name:</p>
+          <input type="text" class="input input-bordered w-full input-sm boarding-med-name" placeholder="Enter medication name" />
+        </div>
+        <div>
+          <p class="text-sm mb-1">Dosage/Instruction:</p>
+          <input type="text" class="input input-bordered w-full input-sm boarding-med-amount" placeholder="e.g., 1 pill, 2 drops left ear" />
+        </div>
+        <div>
+          <p class="text-sm mb-1">Dispense:</p>
+          <div class="flex items-center gap-3 flex-wrap">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-am" />
+              <span class="text-sm">AM</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-pm" />
+              <span class="text-sm">PM</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-rest" />
+              <span class="text-sm">Rest</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-before-bed" />
+              <span class="text-sm">Before Bed</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" class="checkbox checkbox-xs boarding-med-dispense-custom-time" />
+              <span class="text-sm">Custom Time</span>
+            </label>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <p class="text-sm mb-1">Meal Condition:</p>
+            <select class="select select-bordered w-full select-sm boarding-med-meal-condition">
+              <option value="">Select option</option>
+              <option value="after_meal">After Meal</option>
+              <option value="before_meal">Before Meal</option>
+              <option value="empty_stomach">Empty Stomach</option>
+            </select>
+          </div>
+          <div class="boarding-med-custom-time-wrap hidden">
+            <p class="text-sm mb-1">Custom Time:</p>
+            <input type="time" class="input input-bordered w-full input-sm boarding-med-custom-time" />
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#boarding_meds_container').append(rowHtml);
+    refreshBoardingMedicationRowLabels();
+    updateBoardingMedicationRemoveButtons();
   }
 
   // Treatment issues management
@@ -3657,7 +4523,7 @@
             const opt = treatmentData.option || '';
             const optLabel = opt === 'in-house' ? 'In-house' : opt === 'vet-watch' ? 'Vet watch' : opt || '';
             const treatmentArr = Array.isArray(treatmentData.additional_options) ? treatmentData.additional_options : [];
-            const treatmentText = (treatmentArr[0] || treatmentData.additional_option || '').toString().trim();
+            const treatmentText = treatmentArr.length > 0 ? treatmentArr.join(', ') : (treatmentData.additional_option || '').toString().trim();
             const det = (treatmentData.detail || '').trim();
             const parts = [];
             if (optLabel) parts.push('Option: ' + optLabel);
@@ -4641,8 +5507,10 @@
   }
 
   function exportBoardingReportPDF() {
-    const medsAm = $('#boarding_meds_dispense_am').is(':checked') ? '1' : '0';
-    const medsPm = $('#boarding_meds_dispense_pm').is(':checked') ? '1' : '0';
+    const medsList = getBoardingMedicationsData();
+    const hasMedication = medsList.length > 0 ? '1' : '0';
+    const medsAm = hasMedication;
+    const medsPm = hasMedication;
     const exportUrl = '{{ route("export-boarding-detail-report-pdf", $appointment->id) }}' + '?meds_am=' + medsAm + '&meds_pm=' + medsPm;
     window.open(exportUrl, '_blank');
   }

@@ -84,12 +84,34 @@ class AppointmentController extends Controller
         }
         $appointments = $appointments->orderBy('created_at', 'desc')->paginate($perPage);
 
+        $kennelIds = $appointments->getCollection()
+            ->pluck('kennel_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $roomByKennel = collect();
+        if ($kennelIds->isNotEmpty()) {
+            $activeKennelIds = $kennelIds->all();
+
+            Room::select(['name', 'kennel_ids'])
+                ->get()
+                ->each(function ($room) use ($activeKennelIds, &$roomByKennel) {
+                    collect($room->kennel_id_array)
+                        ->intersect($activeKennelIds)
+                        ->each(function ($kennelId) use ($room, &$roomByKennel) {
+                            $roomByKennel->put((string) $kennelId, $room->name);
+                        });
+                });
+        }
+
         $services = Service::where('status', 'active')->where('level', 'primary')->get();
         $staffs = User::whereHas('roles', function ($query) {
             $query->whereNot('title', 'customer');
         })->get();
 
-        return view('appointments.index', compact('appointments', 'perPage', 'services', 'staffs', 'datetimes', 'customerPet', 'serviceId', 'staffId', 'status'));
+        return view('appointments.index', compact('appointments', 'perPage', 'services', 'staffs', 'datetimes', 'customerPet', 'serviceId', 'staffId', 'status', 'roomByKennel'));
     }
 
     public function add(Request $request)
@@ -1398,8 +1420,33 @@ class AppointmentController extends Controller
             ]);
         }
 
-        $isPackageAppointment = $appointment->service && isPackageService($appointment->service);
         $isBoardingService = $appointment->service && isBoardingService($appointment->service);
+
+        if ($isBoardingService) {
+            $checkInForAgreement = Checkin::where('appointment_id', $appointment->id)->first();
+            $flows = [];
+
+            if ($checkInForAgreement && !empty($checkInForAgreement->flows)) {
+                $decodedFlows = json_decode($checkInForAgreement->flows, true);
+                $flows = is_array($decodedFlows) ? $decodedFlows : [];
+            }
+
+            $isTruthy = function ($value) {
+                return $value === true || $value === 'true' || $value === 1 || $value === '1';
+            };
+
+            $agreementAccepted = $isTruthy($flows['boarding_agreement_accepted'] ?? null);
+            $vetAuthorized = $isTruthy($flows['boarding_vet_authorized'] ?? null);
+            $ownerFullName = trim((string) ($flows['boarding_owner_full_name'] ?? ''));
+            $signatureData = trim((string) ($flows['boarding_signature_data'] ?? ''));
+
+            if (!$agreementAccepted || !$vetAuthorized || $ownerFullName === '' || $signatureData === '') {
+                return redirect()->back()->with([
+                    'message' => 'Boarding agreement and owner signature are required before confirming check-in.',
+                    'status' => 'fail'
+                ])->withInput();
+            }
+        }
 
         $validationRules = [
             'staff_id' => 'nullable|exists:users,id',
@@ -1408,10 +1455,7 @@ class AppointmentController extends Controller
             'notes' => 'nullable|string|max:1000',
         ];
 
-        if ($isPackageAppointment) {
-            $validationRules['estimated_price'] = 'nullable|numeric|min:0';
-            $validationRules['pickup_time'] = 'nullable|string';
-        } elseif ($isBoardingService) {
+        if ($isBoardingService) {
             $validationRules['estimated_price'] = 'required|numeric|min:0';
             $validationRules['pickup_time'] = 'nullable|string';
         } else {

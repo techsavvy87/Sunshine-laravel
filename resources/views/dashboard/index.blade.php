@@ -14,7 +14,7 @@
 <div class="mt-6">
   <!--  Start: Dashboard Stats Widget -->
 
-    <div class="grid gap-5 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+    <div class="grid gap-5 lg:grid-cols-2 xl:grid-cols-4">
       <div class="card bg-base-100 shadow">
           <div class="card-body gap-2">
               <div class="flex items-start justify-between gap-2 text-sm">
@@ -187,6 +187,53 @@
               </p>
           </div>
       </div>
+      @if(!empty($incidentReportServiceId))
+      <a href="{{ route('list-incident-reports', ['serviceId' => $incidentReportServiceId]) }}" class="card bg-base-100 shadow transition-shadow hover:shadow-md">
+          <div class="card-body gap-2">
+              <div class="flex items-start justify-between gap-2 text-sm">
+                  <div>
+                      <p class="text-base-content/80 font-medium">
+                          Incidents
+                      </p>
+                      <div class="mt-3 flex items-center gap-2">
+                          <p class="inline text-2xl font-semibold">
+                              {{ number_format($todayBoardingIncidents) }}
+                          </p>
+                      </div>
+                  </div>
+                  <div class="bg-base-200 rounded-box flex items-center p-2">
+                      <span class="iconify lucide--triangle-alert size-5"></span>
+                  </div>
+              </div>
+              <p class="text-base-content/60 text-sm">
+                  Today: {{ number_format($todayBoardingIncidents) }} incidents
+              </p>
+          </div>
+      </a>
+      @else
+      <div class="card bg-base-100 shadow">
+          <div class="card-body gap-2">
+              <div class="flex items-start justify-between gap-2 text-sm">
+                  <div>
+                      <p class="text-base-content/80 font-medium">
+                          Incidents
+                      </p>
+                      <div class="mt-3 flex items-center gap-2">
+                          <p class="inline text-2xl font-semibold">
+                              {{ number_format($todayBoardingIncidents) }}
+                          </p>
+                      </div>
+                  </div>
+                  <div class="bg-base-200 rounded-box flex items-center p-2">
+                      <span class="iconify lucide--triangle-alert size-5"></span>
+                  </div>
+              </div>
+              <p class="text-base-content/60 text-sm">
+                  Today: {{ number_format($todayBoardingIncidents) }} incidents
+              </p>
+          </div>
+      </div>
+      @endif
   </div>
 
   <!--  End: Dashboard Stats Widget -->
