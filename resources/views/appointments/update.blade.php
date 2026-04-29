@@ -215,6 +215,12 @@
     const appointmentDate = "{{ $appointment->date ? \Carbon\Carbon::parse($appointment->date)->format('Y-m-d') : '' }}";
 
     $(document).ready(function() {
+      window.initialKennels = [
+        @foreach($kennels as $kennel)
+          { id: '{{ $kennel->id }}', name: '{{ addslashes($kennel->name) }}' },
+        @endforeach
+      ];
+
       // customer select2 with ajax
       $('#customer').select2({
         placeholder: "Choose a customer",
@@ -405,6 +411,11 @@
 
       $('#boarding_end_datetime').on('change', function() {
         handleAdditionalServiceTimeSlotState();
+        refreshAvailableKennels();
+      });
+
+      $('#boarding_start_datetime').on('change', function() {
+        refreshAvailableKennels();
       });
 
       $('#pet').on('change', function() {
@@ -412,6 +423,7 @@
         if (isBoardingSelectedService($('#service').val())) {
           handleAdditionalServiceTimeSlotState();
         }
+        refreshAvailableKennels();
       });
 
       $('#time_slot').on('change', function() {
@@ -430,6 +442,7 @@
         updateAdditionalServices(selectedServiceId, true);
         updateBoardingLocationField();
         handleAdditionalServiceTimeSlotState();
+        refreshAvailableKennels();
       }
     });
 
@@ -512,6 +525,62 @@
       });
     }
 
+    function renderKennelOptions(kennels, selectedKennelId = '') {
+      const $kennel = $('#kennel');
+      $kennel.empty();
+      $kennel.append('<option value="" hidden selected>Choose a kennel</option>');
+
+      if (!kennels || kennels.length === 0) {
+        $kennel.append('<option value="" disabled>No available kennels</option>');
+        $kennel.val('').trigger('change');
+        return;
+      }
+
+      kennels.forEach(function(kennel) {
+        $kennel.append('<option value="' + kennel.id + '">' + kennel.name + '</option>');
+      });
+
+      const selectedExists = selectedKennelId && kennels.some(function(kennel) {
+        return String(kennel.id) === String(selectedKennelId);
+      });
+
+      $kennel.val(selectedExists ? String(selectedKennelId) : '').trigger('change');
+    }
+
+    function refreshAvailableKennels() {
+      if (!isBoardingSelectedService($('#service').val()) || shouldUseRoomForSelectedPets()) {
+        renderKennelOptions(window.initialKennels || [], $('#kennel').val());
+        return;
+      }
+
+      const boardingStart = $('#boarding_start_datetime').val();
+      const boardingEnd = $('#boarding_end_datetime').val();
+      const currentKennel = $('#kennel').val();
+
+      if (!boardingStart || !boardingEnd) {
+        renderKennelOptions(window.initialKennels || [], currentKennel);
+        return;
+      }
+
+      $.ajax({
+        url: '{{ route("get-appointment-available-kennels") }}',
+        method: 'GET',
+        dataType: 'json',
+        data: {
+          boarding_start_datetime: boardingStart,
+          boarding_end_datetime: boardingEnd,
+          appointment_id: '{{ $appointment->id }}',
+          selected_kennel_id: '{{ $appointment->kennel_id }}'
+        },
+        success: function(kennels) {
+          renderKennelOptions(kennels, currentKennel || '{{ $appointment->kennel_id }}');
+        },
+        error: function() {
+          renderKennelOptions(window.initialKennels || [], currentKennel);
+        }
+      });
+    }
+
     function updateBoardingLocationField() {
       if (!isBoardingSelectedService($('#service').val())) {
         $('#kennel_group').removeClass('hidden');
@@ -540,6 +609,8 @@
         $('#room_group').addClass('hidden');
         $('#room').val('').trigger('change');
       }
+
+      refreshAvailableKennels();
     }
 
     function changeService(ele) {
@@ -558,6 +629,8 @@
       } else {
         handleAdditionalServiceTimeSlotState();
       }
+
+      refreshAvailableKennels();
     }
 
     function updateAdditionalServices(selectedServiceId, preserveSelection = true) {

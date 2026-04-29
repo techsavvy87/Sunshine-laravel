@@ -26,6 +26,7 @@ use App\Models\CustomerPackage;
 use App\Models\Notification;
 use App\Models\Kennel;
 use App\Models\Room;
+use App\Services\AppointmentBookingNotifier;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\Invoice as InvoiceMail;
@@ -260,6 +261,60 @@ class AppointmentController extends Controller
         }
 
         return response()->json($timeSlots);
+    }
+
+    public function getAvailableKennels(Request $request)
+    {
+        $request->validate([
+            'boarding_start_datetime' => 'required|date',
+            'boarding_end_datetime' => 'required|date|after:boarding_start_datetime',
+            'appointment_id' => 'nullable|exists:appointments,id',
+            'selected_kennel_id' => 'nullable|exists:kennels,id',
+        ]);
+
+        $startDateTime = Carbon::parse($request->boarding_start_datetime);
+        $endDateTime = Carbon::parse($request->boarding_end_datetime);
+        $excludeAppointmentId = $request->filled('appointment_id') ? (int) $request->appointment_id : null;
+        $selectedKennelId = $request->filled('selected_kennel_id') ? (int) $request->selected_kennel_id : null;
+
+        $overlappingKennelIds = $this->getOverlappingBoardingAppointmentsQuery($startDateTime, $endDateTime, $excludeAppointmentId)
+            ->whereNotNull('kennel_id')
+            ->pluck('kennel_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $kennels = Kennel::where(function ($query) use ($selectedKennelId) {
+                $query->where('status', 'In Service');
+
+                if ($selectedKennelId) {
+                    $query->orWhere('id', $selectedKennelId);
+                }
+            })
+            ->whereNotIn('id', $overlappingKennelIds)
+            ->orderBy('name')
+            ->get(['id', 'name', 'status']);
+
+        return response()->json($kennels);
+    }
+
+    private function getOverlappingBoardingAppointmentsQuery(Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null)
+    {
+        $query = Appointment::query()
+            ->whereNotIn('status', ['cancelled', 'no_show'])
+            ->whereHas('service.category', function ($q) {
+                $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->where(function ($q) use ($newStart, $newEnd) {
+                $q->whereRaw("CONCAT(end_date, ' ', end_time) > ?", [$newStart->format('Y-m-d H:i:s')])
+                    ->whereRaw("CONCAT(date, ' ', start_time) < ?", [$newEnd->format('Y-m-d H:i:s')]);
+            });
+
+        if ($excludeAppointmentId) {
+            $query->where('id', '!=', $excludeAppointmentId);
+        }
+
+        return $query;
     }
 
     private function serviceRequiresScheduledSlot($service): bool
@@ -594,7 +649,12 @@ class AppointmentController extends Controller
         ]);
 
         $capacity  = Kennel::count() + Room::where('type', '!=', 'dog')->count();
-        $occupied = Kennel::where('status', 'Out of Service')->count() + Room::where('status', '!=', 'Available')->where('type', '!=', 'dog')->count();
+        $occupiedKennelCount = Appointment::whereNotNull('kennel_id')
+            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereHas('service.category', fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']))
+            ->distinct('kennel_id')
+            ->count('kennel_id');
+        $occupied = $occupiedKennelCount + Room::where('status', '!=', 'Available')->where('type', '!=', 'dog')->count();
         $available_status = $occupied / $capacity < 0.5? true : false;
 
         $pet = PetProfile::find($request->pet_id);
@@ -646,7 +706,7 @@ class AppointmentController extends Controller
         ]);
     }
 
-    public function create(Request $request)
+    public function create(Request $request, AppointmentBookingNotifier $bookingNotifier)
     {
         $request->validate([
             'customer' => 'required|exists:users,id',
@@ -720,6 +780,19 @@ class AppointmentController extends Controller
                 return back()->withErrors([
                     'kennel' => 'Please select a kennel for the boarding appointment.'
                 ])->withInput();
+            } elseif ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+                $newStart = Carbon::parse($request->boarding_start_datetime);
+                $newEnd = Carbon::parse($request->boarding_end_datetime);
+
+                $hasOverlap = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd)
+                    ->where('kennel_id', $assignedKennelId)
+                    ->exists();
+
+                if ($hasOverlap) {
+                    return back()->withErrors([
+                        'kennel' => 'The selected kennel is already booked during this time period.'
+                    ])->withInput();
+                }
             }
         }
 
@@ -857,11 +930,9 @@ class AppointmentController extends Controller
         $appointment->metadata = !empty($metadata) ? $metadata : null;
         $appointment->save();
 
-        appointment_audit_log($appointment->id, 'Appointment is created.');
+        $bookingNotifier->sendConfirmation($appointment, Auth::id());
 
-        if ($assignedKennelId && isBoardingService($service)) {
-            Kennel::where('id', $assignedKennelId)->update(['status' => 'Out of Service']);
-        }
+        appointment_audit_log($appointment->id, 'Appointment is created.');
 
         if ($selectedRoom && isBoardingService($service)) {
             $this->markCatRoomOutOfService($selectedRoom->id);
@@ -1002,7 +1073,7 @@ class AppointmentController extends Controller
         return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'kennels', 'rooms'));
     }
 
-    public function update(Request $request)
+    public function update(Request $request, AppointmentBookingNotifier $bookingNotifier)
     {
         $request->validate([
             'appointment_id' => 'required|exists:appointments,id',
@@ -1060,6 +1131,20 @@ class AppointmentController extends Controller
             return back()->withErrors([
                 'kennel' => 'Please select a kennel for the boarding appointment.'
             ])->withInput();
+        } elseif (isBoardingService($service) && $request->filled('kennel') && $request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+            $newStart = Carbon::parse($request->boarding_start_datetime);
+            $newEnd = Carbon::parse($request->boarding_end_datetime);
+            $checkKennelId = (int) $request->kennel;
+
+            $hasOverlap = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd, (int) $appointment->id)
+                ->where('kennel_id', $checkKennelId)
+                ->exists();
+
+            if ($hasOverlap) {
+                return back()->withErrors([
+                    'kennel' => 'The selected kennel is already booked during this time period.'
+                ])->withInput();
+            }
         }
 
         $primaryPetId = $petIds[0] ?? null;
@@ -1185,30 +1270,6 @@ class AppointmentController extends Controller
         $isActiveBoardingAppointment = isBoardingService($service)
             && !in_array($appointment->status, ['cancelled', 'no_show']);
 
-        if ($oldKennelId && $oldKennelId !== $newKennelId) {
-            $oldKennelStillAssigned = Appointment::where('id', '!=', $appointment->id)
-                ->where('kennel_id', $oldKennelId)
-                ->whereIn('status', ['checked_in', 'in_progress'])
-                ->whereHas('service.category', function ($query) {
-                    $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
-                })
-                ->exists();
-
-            if (!$oldKennelStillAssigned) {
-                Kennel::where('id', $oldKennelId)->update(['status' => 'In Service']);
-            }
-        }
-
-        if ($newKennelId) {
-            Kennel::where('id', $newKennelId)->update([
-                'status' => $isActiveBoardingAppointment ? 'Out of Service' : 'In Service'
-            ]);
-        }
-
-        if (!$isActiveBoardingAppointment && $oldKennelId && $oldKennelId === $newKennelId) {
-            Kennel::where('id', $oldKennelId)->update(['status' => 'In Service']);
-        }
-
         if ($oldRoomId && $oldRoomId !== $newRoomId) {
             $this->releaseCatRoomIfUnused($oldRoomId, $appointment->id);
         }
@@ -1229,6 +1290,10 @@ class AppointmentController extends Controller
             appointment_audit_log($appointment->id, "Appointment updated.");
         }
 
+        if ($appointment->status === 'cancelled' && $oldStatus !== 'cancelled') {
+            $bookingNotifier->sendCancellation($appointment, Auth::id());
+        }
+
         return redirect()->route('appointments')->with([
             'message' => 'Appointment updated successfully.',
             'status' => 'success'
@@ -1244,7 +1309,6 @@ class AppointmentController extends Controller
         $appointment = Appointment::find($request->appointment_id);
         $appointmentId = $appointment->id;
 
-        Kennel::where('id', $appointment->kennel_id)->update(['status' => 'In Service']);
         $this->releaseCatRoomIfUnused($appointment->cat_room_id, $appointment->id);
 
         $this->releaseTimeSlots($appointment);
@@ -2490,19 +2554,24 @@ class AppointmentController extends Controller
         }
     }
 
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, $id, AppointmentBookingNotifier $bookingNotifier)
     {
         $request->validate([
             'status' => 'required|in:cancelled,no_show,checked_in',
         ]);
 
         $appointment = Appointment::findOrFail($id);
+        $oldStatus = $appointment->status;
         $newStatus = $request->status;
 
         $appointment->status = $newStatus;
         $appointment->save();
         $label = $newStatus === 'checked_in' ? "Appointment is created." : "Appointment status changed to " . appointment_status_label($newStatus, $appointment->service) . ".";
         appointment_audit_log($appointment->id, $label);
+
+        if ($newStatus === 'cancelled' && $oldStatus !== 'cancelled') {
+            $bookingNotifier->sendCancellation($appointment, Auth::id());
+        }
 
         if (in_array($newStatus, ['cancelled', 'no_show'])) {
             $this->saveCancellationRecord($appointment, $newStatus);

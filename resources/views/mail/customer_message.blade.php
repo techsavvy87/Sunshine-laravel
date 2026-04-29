@@ -102,7 +102,7 @@
     <div class="email-container">
       <h2>Sunshine Spot</h2>
       <p>Dear {{ $messageData['customer_name'] ?? 'Customer' }},</p>
-      <p>{{ $messageData['message'] ?? '' }}</p>
+      <p>{!! nl2br(e($messageData['message'] ?? '')) !!}</p>
       <div class="footer">
         Best regards,<br>
         <strong>{{ $messageData['sender_name'] ?? 'Sunshine Spot Team' }}</strong>

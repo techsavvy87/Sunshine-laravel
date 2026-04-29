@@ -284,6 +284,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/appointment/customer-packages/{customerId}', 'getCustomerPackages')->name('get-appointment-customer-packages')->middleware('ensure.permission:3,can_read');
         Route::get('/appointment/staffs', 'getStaffs')->name('get-appointment-staffs')->middleware('ensure.permission:3,can_read');
         Route::post('/appointment/timeslots', 'getTimeSlots')->name('get-appointment-timeslots')->middleware('ensure.permission:3,can_read');
+        Route::get('/appointment/available-kennels', 'getAvailableKennels')->name('get-appointment-available-kennels')->middleware('ensure.permission:3,can_read');
 
         Route::get('/appointment/view/calendar', 'viewCalendar')->name('view-appointment-calendar')->middleware('ensure.permission:3,can_read');
         Route::post('/appointment/validate', 'getValidationInfo')->name('get-validation-info')->middleware('ensure.permission:3,can_read');

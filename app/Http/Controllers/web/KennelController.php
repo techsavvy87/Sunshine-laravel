@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\web;
 
 use App\Http\Controllers\Controller;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -17,6 +18,13 @@ class KennelController extends Controller
         $search = $request->get('search');
         $type = $request->get('type');
         $status = $request->get('status');
+        $startDate = $request->filled('start_date')
+            ? Carbon::parse($request->start_date)->startOfDay()
+            : Carbon::today();
+        $dateColumns = collect(range(0, 6))->map(function ($offset) use ($startDate) {
+            return $startDate->copy()->addDays($offset);
+        });
+        $endDate = $dateColumns->last();
 
         $query = Kennel::query()->orderBy('created_at', 'desc')->orderBy('id', 'desc');
 
@@ -38,6 +46,7 @@ class KennelController extends Controller
         }
 
         $kennels = $query->paginate($perPage)->withQueryString();
+        $kennelIds = $kennels->getCollection()->pluck('id')->values();
 
         $activeBoardingAppointmentsByKennel = Appointment::with('pet')
             ->whereNotNull('kennel_id')
@@ -62,7 +71,135 @@ class KennelController extends Controller
             return $kennel;
         });
 
-        return view('kennels.index', compact('kennels', 'search', 'type', 'status'));
+        $boardingAppointmentsByKennel = Appointment::with('pet')
+            ->whereIn('kennel_id', $kennelIds)
+            ->whereNotIn('status', ['cancelled', 'no_show'])
+            ->whereHas('service.category', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
+            })
+            ->whereDate('date', '<=', $endDate->toDateString())
+            ->whereRaw('COALESCE(end_date, date) >= ?', [$startDate->toDateString()])
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('kennel_id');
+
+        $availabilityMatrix = [];
+
+        foreach ($kennels->getCollection() as $kennel) {
+            $availabilityMatrix[$kennel->id] = [];
+            $appointments = $boardingAppointmentsByKennel->get($kennel->id, collect());
+
+            foreach ($dateColumns as $columnDate) {
+                $dateString = $columnDate->toDateString();
+
+                if ($kennel->status === 'Out of Service') {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'out_of_service',
+                        'text' => 'Out of Service',
+                    ];
+                    continue;
+                }
+
+                $dayAppointments = $appointments->filter(function ($appointment) use ($dateString) {
+                    $start = Carbon::parse($appointment->date)->toDateString();
+                    $end = $appointment->end_date
+                        ? Carbon::parse($appointment->end_date)->toDateString()
+                        : $start;
+
+                    return $start <= $dateString && $end >= $dateString;
+                })->values();
+
+                if ($dayAppointments->isEmpty()) {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'empty',
+                        'text' => 'Empty',
+                    ];
+                    continue;
+                }
+
+                $checkins = $dayAppointments->filter(function ($appointment) use ($dateString) {
+                    return Carbon::parse($appointment->date)->toDateString() === $dateString;
+                })->values();
+
+                $checkouts = $dayAppointments->filter(function ($appointment) use ($dateString) {
+                    $end = $appointment->end_date
+                        ? Carbon::parse($appointment->end_date)->toDateString()
+                        : Carbon::parse($appointment->date)->toDateString();
+                    return $end === $dateString;
+                })->values();
+
+                $checkoutForTurnover = $checkouts->sortBy('end_time')->first();
+                $checkinForTurnover = $checkins
+                    ->reject(fn ($appointment) => $checkoutForTurnover && $appointment->id === $checkoutForTurnover->id)
+                    ->sortBy('start_time')
+                    ->first();
+
+                if ($checkoutForTurnover && $checkinForTurnover) {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'turnover',
+                        'text' => ($checkoutForTurnover->pet->name ?? 'Dog') . ' -> ' . ($checkinForTurnover->pet->name ?? 'Dog'),
+                        'pet_imgs' => array_values(array_filter([
+                            $checkoutForTurnover->pet->pet_img ?? null,
+                            $checkinForTurnover->pet->pet_img ?? null,
+                        ])),
+                    ];
+                    continue;
+                }
+
+                if ($checkins->isNotEmpty()) {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'checkin',
+                        'text' => $checkins->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
+                        'pet_imgs' => $checkins->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                    ];
+                    continue;
+                }
+
+                $stays = $dayAppointments->filter(function ($appointment) use ($dateString) {
+                    $start = Carbon::parse($appointment->date)->toDateString();
+                    $end = $appointment->end_date
+                        ? Carbon::parse($appointment->end_date)->toDateString()
+                        : $start;
+
+                    return $start < $dateString && $end > $dateString;
+                })->values();
+
+                if ($stays->isNotEmpty()) {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'occupied',
+                        'text' => $stays->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
+                        'pet_imgs' => $stays->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                    ];
+                    continue;
+                }
+
+                if ($checkouts->isNotEmpty()) {
+                    $availabilityMatrix[$kennel->id][$dateString] = [
+                        'state' => 'checkout',
+                        'text' => $checkouts->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
+                        'pet_imgs' => $checkouts->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                    ];
+                    continue;
+                }
+
+                $availabilityMatrix[$kennel->id][$dateString] = [
+                    'state' => 'empty',
+                    'text' => 'Empty',
+                ];
+            }
+        }
+
+        return view('kennels.index', compact(
+            'kennels',
+            'search',
+            'type',
+            'status',
+            'dateColumns',
+            'availabilityMatrix',
+            'startDate'
+        ));
     }
 
     public function addKennel()
