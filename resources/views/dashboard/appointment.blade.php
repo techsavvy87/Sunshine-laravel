@@ -1060,12 +1060,22 @@
                         @endif
                       @else
                         @php
+                          $familyPricingPets = $appointment->family_pets;
+                          if ($familyPricingPets->isEmpty() && $appointment->pet) {
+                            $familyPricingPets = collect([$appointment->pet]);
+                          }
+                          $isBoardingForPricing = isBoardingService($appointment->service);
+                          $petCountForPricing = max(1, $familyPricingPets->count());
+
                           $servicePrice = getServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
-                          if (isBoardingService($appointment->service)) {
+                          if ($isBoardingForPricing) {
                             $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
                             if ($boardingPrice !== null) {
                               $servicePrice = $boardingPrice;
                             }
+                          }
+                          if ($isBoardingForPricing && $petCountForPricing > 1) {
+                            $servicePrice = $servicePrice * $petCountForPricing;
                           }
                         @endphp
                         @php
@@ -1079,6 +1089,9 @@
                           <td>{{ $row++ }}</td>
                           <td width="56%">
                             <div>{{ $appointment->service->name }}</div>
+                            @if($isBoardingForPricing && $petCountForPricing > 1 && !$isChauffeurMain)
+                              <div class="text-[10px] text-base-content/60">{{ $petCountForPricing }} pets</div>
+                            @endif
                             @if($isChauffeurMain && $chauffeurDistanceMiles !== null)
                               <div class="text-[10px] text-base-content/60">
                                 {{ number_format($chauffeurDistanceMiles, 2) }} mi x ${{ number_format($mainPricePerMile, 2) }}/mi
@@ -1099,12 +1112,18 @@
                               $additionalPrice = $isChauffeurAdditional
                                 ? floatval($chauffeurServicePrices[$additionalService->id])
                                 : getServicePrice($additionalService, $appointment->pet->size);
+                              if ($isBoardingForPricing && $petCountForPricing > 1 && !$isChauffeurAdditional) {
+                                $additionalPrice = $additionalPrice * $petCountForPricing;
+                              }
                               $additionalPricePerMile = floatval($additionalService->price_per_mile ?? 0);
                             @endphp
                             <tr class="service-row">
                               <td>{{ $row++ }}</td>
                               <td width="56%">
                                 <div>{{ $additionalService->name }}</div>
+                                @if($isBoardingForPricing && $petCountForPricing > 1 && !$isChauffeurAdditional)
+                                  <div class="text-[10px] text-base-content/60">{{ $petCountForPricing }} pets</div>
+                                @endif
                                 @if($isChauffeurAdditional && $chauffeurDistanceMiles !== null)
                                   <div class="text-[10px] text-base-content/60">
                                     {{ number_format($chauffeurDistanceMiles, 2) }} mi x ${{ number_format($additionalPricePerMile, 2) }}/mi
@@ -1220,118 +1239,134 @@
             <input aria-label="Collapse trigger" type="checkbox" checked="" name="accordion-multiple" />
             <div class="collapse-title font-medium py-1">Pet Profile</div>
             <div class="collapse-content bg-base-100">
-              <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-4">
-                <div class="lg:col-span-1">
-                  @if($appointment->pet)
-                  <a href="{{ route('edit-pet', $appointment->pet->id) }}" class="block w-fit hover:opacity-80 focus:opacity-80 rounded-box" title="View pet">
-                    @if (empty($appointment->pet->pet_img))
-                    <img src="{{ asset('images/no_image.jpg') }}" alt="Pet Image" class="rounded-box bg-base-200 avatar-img">
-                    @else
-                    <img src="{{ asset('storage/pets/'. $appointment->pet->pet_img) }}" alt="Pet Image" class="rounded-box bg-base-200 avatar-img">
-                    @endif
-                  </a>
-                  @else
-                  <img src="{{ asset('images/no_image.jpg') }}" alt="Pet Image" class="rounded-box bg-base-200 avatar-img">
-                  @endif
-                </div>
-                <div class="lg:col-span-3 space-y-1">
-                  @if($appointment->pet)
-                  <p class="font-medium"><a href="{{ route('edit-pet', $appointment->pet->id) }}" class="link link-hover" title="View pet">{{ $appointment->pet->name }}</a></p>
-                  @else
-                  <p class="font-medium">—</p>
-                  @endif
-                  <div class="flex items-center gap-4">
-                    <div class="text-sm text-base-content/70">
-                      <span class="iconify lucide--cake text-base-content/70 size-3"></span>
-                      {{ $appointment->pet->birthdate ? \Carbon\Carbon::parse($appointment->pet->birthdate)->format('m/d/Y') . ' (' . $appointment->pet->age . ' years old)' : '' }}
-                    </div>
-                    @if ($appointment->pet->sex === 'male')
-                    <div class="badge badge-dash badge-primary badge-sm">{{ ucfirst($appointment->pet->sex) }}</div>
-                    @else
-                    <div class="badge badge-dash badge-success badge-sm">{{ ucfirst($appointment->pet->sex) }}</div>
-                    @endif
-                  </div>
-                  <div class="grid grid-cols-2 pt-2 gap-1">
-                    <p class="text-sm text-base-content/70">
-                      <span class="font-medium text-base-content/80">Breed:</span>
-                      {{ $appointment->pet->breed->name }}
-                    </p>
-                    <p class="text-sm text-base-content/70">
-                      <span class="font-medium text-base-content/80">Weight:</span>
-                      {{ $appointment->pet->weight }}lbs
-                      <span class="font-medium text-base-content/80 ps-5">Size:</span>
-                      {{ $appointment->pet->size }}
-                    </p>
-                    <p class="text-sm text-base-content/70">
-                      <span class="font-medium text-base-content/80">Color:</span>
-                      {{ $appointment->pet->color->name }}
-                    </p>
-                    <p class="text-sm text-base-content/70">
-                      <span class="font-medium text-base-content/80">Coat Type:</span>
-                      {{ $appointment->pet->coatType->name }}
-                    </p>
-                  </div>
-                  <div class="mt-3">
-                    <span class="font-medium text-sm text-base-content/80">Veterinarian</span>
-                    <div class="grid grid-cols-2 gap-1">
-                      <p class="text-sm text-base-content/70 flex items-center gap-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-stethoscope-icon lucide-stethoscope"><path d="M11 2v2"/><path d="M5 2v2"/><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg>
-                        {{ $appointment->pet->veterinarian_name }}
-                      </p>
-                      <p class="text-sm text-base-content/70 flex items-center gap-1">
-                        <span class="iconify lucide--phone text-base-content/70 size-3"></span>
-                        {{ $appointment->pet->veterinarian_phone }}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-4">
-                <span class="font-medium text-sm text-base-content/80">Note</span>
-                <p class="text-sm text-base-content/70">{{ $appointment->pet->notes }}</p>
-              </div>
-              <div class="mt-4">
-                <div class="inline-flex flex-wrap gap-2">
-                  <span class="font-medium text-base-content/80 text-sm">Vaccination Status:</span>
-                  @if ($appointment->pet->vaccine_status === 'missing')
-                  <div class="badge badge-soft badge-error badge-sm">{{ ucfirst($appointment->pet->vaccine_status) }}</div>
-                  @elseif ($appointment->pet->vaccine_status === 'submitted')
-                  <div class="badge badge-soft badge-secondary badge-sm">{{ ucfirst($appointment->pet->vaccine_status) }}</div>
-                  @elseif ($appointment->pet->vaccine_status === 'approved')
-                  <div class="badge badge-soft badge-success badge-sm">{{ ucfirst($appointment->pet->vaccine_status) }}</div>
-                  @elseif ($appointment->pet->vaccine_status === 'expired')
-                  <div class="badge badge-soft badge-neutral badge-sm">{{ ucfirst($appointment->pet->vaccine_status) }}</div>
-                  @else
-                  <div class="badge badge-soft badge-warning badge-sm">{{ ucfirst($appointment->pet->vaccine_status) }}</div>
-                  @endif
-                </div>
-                <table class="table text-base-content/70 text-xs mt-3">
-                  <tbody>
-                    @foreach ($appointment->pet->vaccinations as $vaccination)
-                      <tr>
-                        <td>{{ $loop->iteration }}</td>
-                        <td>{{ ucfirst($vaccination->type) }}</td>
-                        <td>{{ \Carbon\Carbon::parse($vaccination->date)->format('m/d/Y') }}</td>
-                        <td>{{ \Carbon\Carbon::parse($vaccination->date)->addMonths($vaccination->months)->format('m/d/Y') }}</td>
-                      </tr>
-                    @endforeach
-                  </tbody>
-                </table>
-              </div>
-              <div class="mt-4">
-                <span class="font-medium text-sm text-base-content/80">Certificates</span>
-                <div class="mt-1 flex flex-wrap gap-2">
-                  @foreach ($appointment->pet->certificates as $certificate)
-                  <div class="flex items-center text-base-content/70 text-sm gap-1 ps-3">
-                    <span class="iconify lucide--file-text size-3.5"></span>
-                    <span class="hidden sm:inline">{{ $certificate->file_name }}</span>
-                    <a href="{{ asset('storage/pets/' . $certificate->file_path) }}" target="_blank" class="btn btn-sm btn-link">
-                      <span class="iconify lucide--external-link size-4 text-info"></span>
+              @php
+                $profilePets = $appointment->family_pets;
+                if ($profilePets->isEmpty() && $appointment->pet) {
+                  $profilePets = collect([$appointment->pet]);
+                }
+              @endphp
+
+              @forelse($profilePets as $pet)
+              <div class="{{ $loop->first ? 'mt-4' : 'mt-4 border-t border-base-300' }}">
+                <div class="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-4">
+                  <div class="lg:col-span-1">
+                    <a href="{{ route('edit-pet', $pet->id) }}" class="block w-fit hover:opacity-80 focus:opacity-80 rounded-box" title="View pet">
+                      @if (empty($pet->pet_img))
+                      <img src="{{ asset('images/no_image.jpg') }}" alt="Pet Image" class="rounded-box bg-base-200 avatar-img">
+                      @else
+                      <img src="{{ asset('storage/pets/'. $pet->pet_img) }}" alt="Pet Image" class="rounded-box bg-base-200 avatar-img">
+                      @endif
                     </a>
                   </div>
-                  @endforeach
+                  <div class="lg:col-span-3 space-y-1">
+                    <p class="font-medium"><a href="{{ route('edit-pet', $pet->id) }}" class="link link-hover" title="View pet">{{ $pet->name }}</a></p>
+                    <div class="flex items-center gap-4">
+                      <div class="text-sm text-base-content/70">
+                        <span class="iconify lucide--cake text-base-content/70 size-3"></span>
+                        {{ $pet->birthdate ? \Carbon\Carbon::parse($pet->birthdate)->format('m/d/Y') . ' (' . $pet->age . ' years old)' : '' }}
+                      </div>
+                      @if (($pet->sex ?? '') === 'male')
+                      <div class="badge badge-dash badge-primary badge-sm">{{ ucfirst($pet->sex) }}</div>
+                      @else
+                      <div class="badge badge-dash badge-success badge-sm">{{ ucfirst($pet->sex ?? 'unknown') }}</div>
+                      @endif
+                    </div>
+                    <div class="grid grid-cols-2 pt-2 gap-1">
+                      <p class="text-sm text-base-content/70">
+                        <span class="font-medium text-base-content/80">Breed:</span>
+                        {{ optional($pet->breed)->name ?? 'N/A' }}
+                      </p>
+                      <p class="text-sm text-base-content/70">
+                        <span class="font-medium text-base-content/80">Weight:</span>
+                        {{ $pet->weight ?? 'N/A' }}{{ isset($pet->weight) ? 'lbs' : '' }}
+                        <span class="font-medium text-base-content/80 ps-5">Size:</span>
+                        {{ $pet->size ?? 'N/A' }}
+                      </p>
+                      <p class="text-sm text-base-content/70">
+                        <span class="font-medium text-base-content/80">Color:</span>
+                        {{ optional($pet->color)->name ?? 'N/A' }}
+                      </p>
+                      <p class="text-sm text-base-content/70">
+                        <span class="font-medium text-base-content/80">Coat Type:</span>
+                        {{ optional($pet->coatType)->name ?? 'N/A' }}
+                      </p>
+                    </div>
+                    <div class="mt-3">
+                      <span class="font-medium text-sm text-base-content/80">Veterinarian</span>
+                      <div class="grid grid-cols-2 gap-1">
+                        <p class="text-sm text-base-content/70 flex items-center gap-1">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-stethoscope-icon lucide-stethoscope"><path d="M11 2v2"/><path d="M5 2v2"/><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg>
+                          {{ $pet->veterinarian_name ?? 'N/A' }}
+                        </p>
+                        <p class="text-sm text-base-content/70 flex items-center gap-1">
+                          <span class="iconify lucide--phone text-base-content/70 size-3"></span>
+                          {{ $pet->veterinarian_phone ?? 'N/A' }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-4">
+                  <span class="font-medium text-sm text-base-content/80">Note</span>
+                  <p class="text-sm text-base-content/70">{{ $pet->notes ?: 'N/A' }}</p>
+                </div>
+
+                <div class="mt-4">
+                  <div class="inline-flex flex-wrap gap-2">
+                    <span class="font-medium text-base-content/80 text-sm">Vaccination Status:</span>
+                    @if (($pet->vaccine_status ?? '') === 'missing')
+                    <div class="badge badge-soft badge-error badge-sm">{{ ucfirst($pet->vaccine_status) }}</div>
+                    @elseif (($pet->vaccine_status ?? '') === 'submitted')
+                    <div class="badge badge-soft badge-secondary badge-sm">{{ ucfirst($pet->vaccine_status) }}</div>
+                    @elseif (($pet->vaccine_status ?? '') === 'approved')
+                    <div class="badge badge-soft badge-success badge-sm">{{ ucfirst($pet->vaccine_status) }}</div>
+                    @elseif (($pet->vaccine_status ?? '') === 'expired')
+                    <div class="badge badge-soft badge-neutral badge-sm">{{ ucfirst($pet->vaccine_status) }}</div>
+                    @else
+                    <div class="badge badge-soft badge-warning badge-sm">{{ ucfirst($pet->vaccine_status ?? 'unknown') }}</div>
+                    @endif
+                  </div>
+                  <table class="table text-base-content/70 text-xs mt-3">
+                    <tbody>
+                      @forelse (collect($pet->vaccinations ?? []) as $vaccination)
+                        <tr>
+                          <td>{{ $loop->iteration }}</td>
+                          <td>{{ ucfirst($vaccination->type) }}</td>
+                          <td>{{ \Carbon\Carbon::parse($vaccination->date)->format('m/d/Y') }}</td>
+                          <td>{{ \Carbon\Carbon::parse($vaccination->date)->addMonths($vaccination->months)->format('m/d/Y') }}</td>
+                        </tr>
+                      @empty
+                        <tr>
+                          <td colspan="4" class="text-base-content/60">No vaccinations found.</td>
+                        </tr>
+                      @endforelse
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="mt-4">
+                  <span class="font-medium text-sm text-base-content/80">Certificates</span>
+                  <div class="mt-1 flex flex-wrap gap-2">
+                    @forelse (collect($pet->certificates ?? []) as $certificate)
+                    <div class="flex items-center text-base-content/70 text-sm gap-1 ps-3">
+                      <span class="iconify lucide--file-text size-3.5"></span>
+                      <span class="hidden sm:inline">{{ $certificate->file_name }}</span>
+                      <a href="{{ asset('storage/pets/' . $certificate->file_path) }}" target="_blank" class="btn btn-sm btn-link">
+                        <span class="iconify lucide--external-link size-4 text-info"></span>
+                      </a>
+                    </div>
+                    @empty
+                    <p class="text-sm text-base-content/60">No certificates found.</p>
+                    @endforelse
+                  </div>
                 </div>
               </div>
+              @empty
+              <div class="mt-4">
+                <p class="text-base-content/60">No pet profile found.</p>
+              </div>
+              @endforelse
             </div>
           </div>
         </div>

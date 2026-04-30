@@ -48,20 +48,34 @@ class KennelController extends Controller
         $kennels = $query->paginate($perPage)->withQueryString();
         $kennelIds = $kennels->getCollection()->pluck('id')->values();
 
-        $activeBoardingAppointmentsByKennel = Appointment::with('pet')
+        $collectAppointmentPets = function ($appointment) {
+            $familyPets = collect($appointment->family_pets ?? [])->filter();
+
+            if ($familyPets->isNotEmpty()) {
+                return $familyPets;
+            }
+
+            return collect([$appointment->pet])->filter();
+        };
+
+        $today = Carbon::today()->toDateString();
+
+        $activeBoardingAppointmentsByKennel = Appointment::with(['pet', 'customer'])
             ->whereNotNull('kennel_id')
-            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereNotIn('status', ['cancelled', 'canceled', 'no_show'])
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })
+            ->whereDate('date', '<=', $today)
+            ->whereRaw('COALESCE(end_date, date) >= ?', [$today])
             ->orderBy('date', 'desc')
             ->orderBy('start_time', 'desc')
             ->orderBy('id', 'desc')
             ->get()
             ->groupBy('kennel_id')
-            ->map(function ($appointments) {
-                return $appointments->flatMap(function ($appointment) {
-                    return $appointment->family_pets;
+            ->map(function ($appointments) use ($collectAppointmentPets) {
+                return $appointments->flatMap(function ($appointment) use ($collectAppointmentPets) {
+                    return $collectAppointmentPets($appointment);
                 })->filter()->unique('id')->values();
             });
 
@@ -71,7 +85,7 @@ class KennelController extends Controller
             return $kennel;
         });
 
-        $boardingAppointmentsByKennel = Appointment::with('pet')
+        $boardingAppointmentsByKennel = Appointment::with(['pet', 'customer'])
             ->whereIn('kennel_id', $kennelIds)
             ->whereNotIn('status', ['cancelled', 'no_show'])
             ->whereHas('service.category', function ($query) {
@@ -130,6 +144,18 @@ class KennelController extends Controller
                     return $end === $dateString;
                 })->values();
 
+                $collectPetsFromAppointments = function ($appointments) {
+                    $pets = collect($appointments)->flatMap(function ($appointment) {
+                        return collect($appointment->family_pets ?? [])->filter();
+                    })->filter()->unique('id')->values();
+
+                    if ($pets->isEmpty()) {
+                        $pets = collect($appointments)->map(fn ($appointment) => $appointment->pet)->filter()->unique('id')->values();
+                    }
+
+                    return $pets;
+                };
+
                 $checkoutForTurnover = $checkouts->sortBy('end_time')->first();
                 $checkinForTurnover = $checkins
                     ->reject(fn ($appointment) => $checkoutForTurnover && $appointment->id === $checkoutForTurnover->id)
@@ -137,22 +163,32 @@ class KennelController extends Controller
                     ->first();
 
                 if ($checkoutForTurnover && $checkinForTurnover) {
+                    $checkoutTurnoverPets = $collectPetsFromAppointments([$checkoutForTurnover]);
+                    $checkinTurnoverPets = $collectPetsFromAppointments([$checkinForTurnover]);
+
                     $availabilityMatrix[$kennel->id][$dateString] = [
                         'state' => 'turnover',
-                        'text' => ($checkoutForTurnover->pet->name ?? 'Dog') . ' -> ' . ($checkinForTurnover->pet->name ?? 'Dog'),
-                        'pet_imgs' => array_values(array_filter([
-                            $checkoutForTurnover->pet->pet_img ?? null,
-                            $checkinForTurnover->pet->pet_img ?? null,
-                        ])),
+                        'text' => $checkoutTurnoverPets->map(fn ($pet) => $pet->name ?? 'Dog')->filter()->unique()->implode(' + ')
+                            . ' -> '
+                            . $checkinTurnoverPets->map(fn ($pet) => $pet->name ?? 'Dog')->filter()->unique()->implode(' + '),
+                        'pet_imgs' => $checkoutTurnoverPets
+                            ->concat($checkinTurnoverPets)
+                            ->map(fn ($pet) => $pet->pet_img ?? null)
+                            ->filter()
+                            ->unique()
+                            ->values()
+                            ->all(),
                     ];
                     continue;
                 }
 
                 if ($checkins->isNotEmpty()) {
+                    $checkinPets = $collectPetsFromAppointments($checkins);
+
                     $availabilityMatrix[$kennel->id][$dateString] = [
                         'state' => 'checkin',
-                        'text' => $checkins->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
-                        'pet_imgs' => $checkins->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                        'text' => $checkinPets->map(fn ($pet) => $pet->name ?? 'Dog')->filter()->unique()->implode(' + '),
+                        'pet_imgs' => $checkinPets->map(fn ($pet) => $pet->pet_img ?? null)->filter()->unique()->values()->all(),
                     ];
                     continue;
                 }
@@ -167,19 +203,33 @@ class KennelController extends Controller
                 })->values();
 
                 if ($stays->isNotEmpty()) {
+                    $stayPets = $stays->flatMap(function ($appointment) {
+                        return collect($appointment->family_pets ?? [])->filter();
+                    })->filter()->unique('id')->values();
+
+                    if ($stayPets->isEmpty()) {
+                        $stayPets = $stays->map(fn ($appointment) => $appointment->pet)->filter()->unique('id')->values();
+                    }
+
+                    $isFamilyStay = $stays->contains(function ($appointment) {
+                        return collect($appointment->family_pets ?? [])->filter()->count() > 1;
+                    });
+
                     $availabilityMatrix[$kennel->id][$dateString] = [
-                        'state' => 'occupied',
-                        'text' => $stays->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
-                        'pet_imgs' => $stays->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                        'state' => $isFamilyStay ? 'occupied_family' : 'occupied',
+                        'text' => $stayPets->map(fn ($pet) => $pet->name ?? 'Dog')->filter()->unique()->implode(' + '),
+                        'pet_imgs' => $stayPets->map(fn ($pet) => $pet->pet_img ?? null)->filter()->unique()->values()->all(),
                     ];
                     continue;
                 }
 
                 if ($checkouts->isNotEmpty()) {
+                    $checkoutPets = $collectPetsFromAppointments($checkouts);
+
                     $availabilityMatrix[$kennel->id][$dateString] = [
                         'state' => 'checkout',
-                        'text' => $checkouts->map(fn ($appointment) => $appointment->pet->name ?? 'Dog')->filter()->unique()->implode(', '),
-                        'pet_imgs' => $checkouts->map(fn ($a) => $a->pet->pet_img ?? null)->filter()->unique()->values()->all(),
+                        'text' => $checkoutPets->map(fn ($pet) => $pet->name ?? 'Dog')->filter()->unique()->implode(' + '),
+                        'pet_imgs' => $checkoutPets->map(fn ($pet) => $pet->pet_img ?? null)->filter()->unique()->values()->all(),
                     ];
                     continue;
                 }

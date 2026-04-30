@@ -580,20 +580,44 @@ class PaymentController extends Controller
             }
         } else {
             if (isBoardingService($appointment->service)) {
-                $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
-                $estimatedTotal = $boardingPrice !== null
-                    ? $boardingPrice
-                    : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+                $pricingPets = $appointment->family_pets;
+
+                if ($pricingPets->isEmpty() && $appointment->pet) {
+                    $pricingPets = collect([$appointment->pet]);
+                }
+
+                foreach ($pricingPets as $pet) {
+                    $petSize = $pet->size ?? ($appointment->pet->size ?? 'medium');
+                    $priceAppointment = clone $appointment;
+                    $priceAppointment->pet_id = $pet->id ?? $appointment->pet_id;
+
+                    $boardingPrice = getBoardingServicePrice($appointment->service, $priceAppointment);
+                    $petTotal = $boardingPrice !== null
+                        ? $boardingPrice
+                        : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+
+                    $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
+                    foreach ($additionalServiceIds as $serviceId) {
+                        if (!empty($serviceId)) {
+                            $service = Service::find($serviceId);
+                            if ($service) {
+                                $petTotal += $resolveAppointmentServicePrice($service, $petSize);
+                            }
+                        }
+                    }
+
+                    $estimatedTotal += $petTotal;
+                }
             } else {
                 $estimatedTotal = $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
-            }
 
-            $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
-            foreach ($additionalServiceIds as $serviceId) {
-                if (!empty($serviceId)) {
-                    $service = Service::find($serviceId);
-                    if ($service) {
-                        $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize);
+                $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
+                foreach ($additionalServiceIds as $serviceId) {
+                    if (!empty($serviceId)) {
+                        $service = Service::find($serviceId);
+                        if ($service) {
+                            $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize);
+                        }
                     }
                 }
             }

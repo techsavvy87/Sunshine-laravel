@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\web;
 
 use App\Http\Controllers\Controller;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -33,31 +34,45 @@ class RoomController extends Controller
         $kennels = Kennel::orderBy('name')->get();
         $kennelLookup = $kennels->keyBy('id');
 
-        $activeBoardingAppointments = Appointment::with(['pet', 'catRoom'])
-            ->whereIn('status', ['checked_in', 'in_progress'])
+        $today = Carbon::today()->toDateString();
+
+        $activeBoardingAppointments = Appointment::with(['pet', 'catRoom', 'customer'])
+            ->whereNotIn('status', ['cancelled', 'canceled', 'no_show'])
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })
+            ->whereDate('date', '<=', $today)
+            ->whereRaw('COALESCE(end_date, date) >= ?', [$today])
             ->orderBy('date', 'desc')
             ->orderBy('start_time', 'desc')
             ->orderBy('id', 'desc')
             ->get();
 
+        $collectAppointmentPets = function ($appointment) {
+            $familyPets = collect($appointment->family_pets ?? [])->filter();
+
+            if ($familyPets->isNotEmpty()) {
+                return $familyPets;
+            }
+
+            return collect([$appointment->pet])->filter();
+        };
+
         $activeBoardingAppointmentsByKennel = $activeBoardingAppointments
             ->whereNotNull('kennel_id')
             ->groupBy('kennel_id')
-            ->map(function ($appointments) {
-                return $appointments->flatMap(function ($appointment) {
-                    return $appointment->family_pets;
+            ->map(function ($appointments) use ($collectAppointmentPets) {
+                return $appointments->flatMap(function ($appointment) use ($collectAppointmentPets) {
+                    return $collectAppointmentPets($appointment);
                 })->filter()->unique('id')->values();
             });
 
         $activeBoardingAppointmentsByRoom = $activeBoardingAppointments
             ->whereNotNull('cat_room_id')
             ->groupBy('cat_room_id')
-            ->map(function ($appointments) {
-                return $appointments->flatMap(function ($appointment) {
-                    return $appointment->family_pets;
+            ->map(function ($appointments) use ($collectAppointmentPets) {
+                return $appointments->flatMap(function ($appointment) use ($collectAppointmentPets) {
+                    return $collectAppointmentPets($appointment);
                 })->filter()->unique('id')->values();
             });
 

@@ -41,7 +41,8 @@
     <div class="card-body p-0">
       <div class="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#34d399;"></span>Occupied</span>
+          <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#34d399;"></span>Single Occupied</span>
+          <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#ff00ff;"></span>Family Occupied</span>
           <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#3b82f6;"></span>Check-in</span>
           <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#f97316;"></span>Check-out</span>
           <span class="inline-flex items-center gap-1.5 text-xs text-base-content/70"><span class="inline-block shrink-0" style="width:0.65rem;height:0.65rem;border-radius:2px;background:#8b5cf6;"></span>Turnover</span>
@@ -81,6 +82,7 @@
                     $cell = $availabilityMatrix[$kennel->id][$columnDate->toDateString()] ?? ['state' => 'empty', 'text' => 'Empty'];
                     $markerColor = match($cell['state']) {
                       'occupied' => '#34d399',
+                      'occupied_family' => '#ff00ff',
                       'checkin' => '#3b82f6',
                       'checkout' => '#f97316',
                       'turnover' => '#8b5cf6',

@@ -96,20 +96,34 @@
                 </div>
                 <div class="space-y-2">
                   @forelse($appointments->where('status', $statusKey) as $appointment)
+                    @php
+                      $cardPets = $appointment->family_pets;
+                      if ($cardPets->isEmpty() && $appointment->pet) {
+                        $cardPets = collect([$appointment->pet]);
+                      }
+                    @endphp
                     <div class="card bg-base-100 shadow-sm p-2 relative" style="cursor: pointer;" onclick="window.location='{{ route('appointment-dashboard', $appointment->id) }}'">
-                      <div class="flex items-center space-x-3">
-                        <img src="{{ empty($appointment->pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/'. $appointment->pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 size-14" style="object-fit: cover;">
-                        <div>
-                          <p class="font-medium">
-                            <span>{{ $appointment->pet->name }}</span>
-                            @if ($appointment->pet->rating === 'green')
-                              <i class="fa-solid fa-star" style="color: lightseagreen; font-size: 14px"></i>
-                            @elseif ($appointment->pet->rating === 'yellow')
-                              <i class="fa-solid fa-star" style="color: gold; font-size: 14px"></i>
-                            @elseif ($appointment->pet->rating === 'red')
-                              <i class="fa-solid fa-star" style="color: tomato; font-size: 14px"></i>
-                            @endif
-                          </p>
+                      <div class="flex gap-3 items-center">
+                        <div class="flex w-14 shrink-0 flex-col gap-1">
+                          @foreach($cardPets->take(3) as $pet)
+                            <img src="{{ empty($pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/'. $pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 block" style="width: 3.5rem; height: 3.5rem; object-fit: cover;">
+                          @endforeach
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="space-y-0.5 flex items-center gap-1">
+                            @foreach($cardPets as $pet)
+                              <p class="font-medium leading-tight wrap-break-word">
+                                <span>{{ $pet->name }}</span>
+                                @if ($pet->rating === 'green')
+                                  <i class="fa-solid fa-star" style="color: lightseagreen; font-size: 14px"></i>
+                                @elseif ($pet->rating === 'yellow')
+                                  <i class="fa-solid fa-star" style="color: gold; font-size: 14px"></i>
+                                @elseif ($pet->rating === 'red')
+                                  <i class="fa-solid fa-star" style="color: tomato; font-size: 14px"></i>
+                                @endif
+                              </p>
+                            @endforeach
+                          </div>
                           <p class="text-xs text-base-content/60">
                             <span class="text-base-content/80">Customer: </span>
                             {{ $appointment->customer->profile ? $appointment->customer->profile->first_name . " " . $appointment->customer->profile->last_name : $appointment->customer->name }}

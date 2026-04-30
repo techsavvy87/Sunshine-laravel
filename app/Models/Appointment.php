@@ -13,8 +13,31 @@ class Appointment extends Model
 
     public function getFamilyPetIdsAttribute(): array
     {
-        $metadata = is_array($this->metadata) ? $this->metadata : [];
-        $petIds = $metadata['family_pet_ids'] ?? [];
+        $metadata = $this->metadata;
+
+        if (is_string($metadata) && trim($metadata) !== '') {
+            $decodedMetadata = json_decode($metadata, true);
+
+            if (is_string($decodedMetadata) && trim($decodedMetadata) !== '') {
+                $decodedMetadata = json_decode($decodedMetadata, true);
+            }
+
+            if (is_array($decodedMetadata)) {
+                $metadata = $decodedMetadata;
+            }
+        }
+
+        $metadata = is_array($metadata) ? $metadata : [];
+
+        $petIds = $metadata['family_pet_ids'] ?? ($metadata['family_pets'] ?? ($metadata['pet_ids'] ?? []));
+
+        if (is_array($petIds) && !empty($petIds) && is_array($petIds[0] ?? null)) {
+            $petIds = collect($petIds)
+                ->map(fn ($pet) => $pet['id'] ?? null)
+                ->filter()
+                ->values()
+                ->all();
+        }
 
         if (is_string($petIds)) {
             $petIds = explode(',', $petIds);

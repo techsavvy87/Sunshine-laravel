@@ -351,6 +351,42 @@ class AppointmentController extends Controller
         })->values();
     }
 
+    private function calculateFamilyBoardingEstimatedPrice(Service $service, Appointment $appointment, array $petIds, array $additionalServiceIds, int $customerId): float
+    {
+        if (!isBoardingService($service) || empty($petIds)) {
+            return 0;
+        }
+
+        $selectedAdditionalServices = !empty($additionalServiceIds)
+            ? Service::whereIn('id', $additionalServiceIds)->get()
+            : collect();
+
+        $estimatedTotal = 0;
+
+        foreach ($petIds as $petId) {
+            $pet = PetProfile::find($petId);
+            $petSize = $pet ? $pet->size : 'medium';
+
+            $priceAppointment = clone $appointment;
+            $priceAppointment->pet_id = $petId;
+
+            $petBoardingTotal = getBoardingServicePrice($service, $priceAppointment);
+            $petTotal = $petBoardingTotal === null ? 0 : $petBoardingTotal;
+
+            foreach ($selectedAdditionalServices as $additionalService) {
+                if (isChauffeurService($additionalService)) {
+                    $petTotal += calculateChauffeurServicePrice($additionalService, $customerId);
+                } else {
+                    $petTotal += getServicePrice($additionalService, $petSize);
+                }
+            }
+
+            $estimatedTotal += $petTotal;
+        }
+
+        return round($estimatedTotal, 2);
+    }
+
     private function findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date)
     {
         $solutions = collect([]);
@@ -892,34 +928,13 @@ class AppointmentController extends Controller
             $appointment->end_time = $endDateTime->toTimeString();
 
             if (isBoardingService($service)) {
-                $boardingTotal = 0;
-                $additionalServicesTotal = 0;
-
-                foreach ($petIds as $petId) {
-                    $priceAppointment = clone $appointment;
-                    $priceAppointment->pet_id = $petId;
-
-                    $petBoardingTotal = getBoardingServicePrice($service, $priceAppointment);
-                    $boardingTotal += $petBoardingTotal === null ? 0 : $petBoardingTotal;
-
-                    if ($request->filled('additional_services')) {
-                        $pet = PetProfile::find($petId);
-                        $petSize = $pet ? $pet->size : 'medium';
-
-                        $additionalServiceIds = $request->additional_services;
-                        $additionalServices = Service::whereIn('id', $additionalServiceIds)->get();
-
-                        foreach ($additionalServices as $addService) {
-                            if (isChauffeurService($addService)) {
-                                $additionalServicesTotal += calculateChauffeurServicePrice($addService, $request->customer);
-                            } else {
-                                $additionalServicesTotal += getServicePrice($addService, $petSize);
-                            }
-                        }
-                    }
-                }
-
-                $appointment->estimated_price = $boardingTotal + $additionalServicesTotal;
+                $appointment->estimated_price = $this->calculateFamilyBoardingEstimatedPrice(
+                    $service,
+                    $appointment,
+                    $petIds,
+                    $request->input('additional_services', []),
+                    (int) $request->customer
+                );
             }
         }
 
@@ -1251,6 +1266,16 @@ class AppointmentController extends Controller
             if (!isBoardingService($service)) {
                 $appointment->end_date = null;
             }
+        }
+
+        if (isBoardingService($service) && !empty($petIds)) {
+            $appointment->estimated_price = $this->calculateFamilyBoardingEstimatedPrice(
+                $service,
+                $appointment,
+                $petIds,
+                $selectedAdditionalServiceIds,
+                (int) $request->customer
+            );
         }
 
         $appointment->metadata = !empty($metadata) ? $metadata : null;

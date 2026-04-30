@@ -259,25 +259,39 @@ class DashboardController extends Controller
             return $extraFee;
         };
 
+        $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
+        $additionalServices = Service::whereIn('id', array_filter($additionalServiceIds))->get();
+
         // Set up the estimated price of the appointment
         $computedEstimatedPrice = 0;
-        // For regular appointments, use service price (boarding uses appointment-based pricing)
         if (isBoardingService($appointment->service)) {
-            $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
-            $computedEstimatedPrice = $boardingPrice !== null
-                ? $boardingPrice
-                : $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
+            $pricingPets = $appointment->family_pets;
+
+            if ($pricingPets->isEmpty() && $appointment->pet) {
+                $pricingPets = collect([$appointment->pet]);
+            }
+
+            foreach ($pricingPets as $pet) {
+                $petSize = $pet->size ?? ($appointment->pet->size ?? 'medium');
+                $priceAppointment = clone $appointment;
+                $priceAppointment->pet_id = $pet->id ?? $appointment->pet_id;
+
+                $boardingPrice = getBoardingServicePrice($appointment->service, $priceAppointment);
+                $petTotal = $boardingPrice !== null
+                    ? $boardingPrice
+                    : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+
+                foreach ($additionalServices as $service) {
+                    $petTotal += $resolveAppointmentServicePrice($service, $petSize);
+                }
+
+                $computedEstimatedPrice += $petTotal;
+            }
         } else {
             $computedEstimatedPrice = $resolveAppointmentServicePrice($appointment->service, $appointment->pet->size, $appointment->metadata);
-        }
 
-        $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
-        foreach ($additionalServiceIds as $serviceId) {
-            if (!empty($serviceId)) {
-                $service = Service::find($serviceId);
-                if ($service) {
-                    $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $appointment->pet->size);
-                }
+            foreach ($additionalServices as $service) {
+                $computedEstimatedPrice += $resolveAppointmentServicePrice($service, $appointment->pet->size);
             }
         }
 
@@ -295,9 +309,13 @@ class DashboardController extends Controller
         $computedEstimatedPrice += $calculateCoatTypeExtraFee($coatPricingServiceIds);
 
         $storedEstimatedPrice = floatval($appointment->estimated_price ?? 0);
-        $appointment->estimated_price = $storedEstimatedPrice > 0
-            ? $storedEstimatedPrice
-            : $computedEstimatedPrice;
+        if (isBoardingService($appointment->service)) {
+            $appointment->estimated_price = $computedEstimatedPrice;
+        } else {
+            $appointment->estimated_price = $storedEstimatedPrice > 0
+                ? $storedEstimatedPrice
+                : $computedEstimatedPrice;
+        }
         $dbEstimatedPrice = $appointment->estimated_price;
 
         // Always compute coat extra fee for the line-item display row

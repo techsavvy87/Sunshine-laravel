@@ -128,7 +128,7 @@
                 {{ $checkInDate->format('M j') }}
               </td>
               <td style="text-align:center">
-                {{ $pickupDate->format('M j') }}{{ $appointment->end_time ? ' ' . \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('g:i A') : '' }}
+                {{ $pickupDate->format('M j') }},{{ $appointment->end_time ? ' ' . \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('g:i A') : '' }}
               </td>
               <td style="text-align:center">
                 {{ $stayDays }} {{ $stayDays === 1 ? 'day' : 'days' }}

@@ -153,10 +153,10 @@ if (!function_exists('getBoardingServicePrice')) {
             }
 
             if ($startDateTime && $endDateTime && $endDateTime->gt($startDateTime)) {
-                $totalHours = $startDateTime->diffInHours($endDateTime);
-                return $pricePerHour * $totalHours;
+                $totalHours = $startDateTime->diffInMinutes($endDateTime) / 60;
+                return round($pricePerHour * $totalHours, 2);
             } elseif ($startDateTime) {
-                return $pricePerHour * 24;
+                return round($pricePerHour * 24, 2);
             }
         }
 

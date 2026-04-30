@@ -401,19 +401,36 @@ class AppointmentController extends Controller
                 }
             }
         } else {
-            $petSize = $appointment->pet->size ?? 'medium';
-
             if (isBoardingService($appointment->service)) {
-                $boardingPrice = getBoardingServicePrice($appointment->service, $appointment);
-                $estimatedTotal = $boardingPrice !== null
-                    ? $boardingPrice
-                    : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
-            } else {
-                $estimatedTotal = $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
-            }
+                $pricingPets = $appointment->family_pets;
 
-            foreach ($appointment->additionalServices as $addService) {
-                $estimatedTotal += $resolveAppointmentServicePrice($addService, $petSize);
+                if ($pricingPets->isEmpty() && $appointment->pet) {
+                    $pricingPets = collect([$appointment->pet]);
+                }
+
+                foreach ($pricingPets as $pet) {
+                    $petSize = $pet->size ?? ($appointment->pet->size ?? 'medium');
+                    $priceAppointment = clone $appointment;
+                    $priceAppointment->pet_id = $pet->id ?? $appointment->pet_id;
+
+                    $boardingPrice = getBoardingServicePrice($appointment->service, $priceAppointment);
+                    $petTotal = $boardingPrice !== null
+                        ? $boardingPrice
+                        : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+
+                    foreach ($appointment->additionalServices as $addService) {
+                        $petTotal += $resolveAppointmentServicePrice($addService, $petSize);
+                    }
+
+                    $estimatedTotal += $petTotal;
+                }
+            } else {
+                $petSize = $appointment->pet->size ?? 'medium';
+                $estimatedTotal = $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+
+                foreach ($appointment->additionalServices as $addService) {
+                    $estimatedTotal += $resolveAppointmentServicePrice($addService, $petSize);
+                }
             }
         }
 
