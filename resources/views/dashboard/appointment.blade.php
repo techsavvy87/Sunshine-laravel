@@ -1741,11 +1741,19 @@
                         </label>
                       </div>
                       @if($appointment->pet->age >= 16)
+                      @php
+                        $restRequired = !empty($checkedIn->flows['rest_required']) && ($checkedIn->flows['rest_required'] === true || $checkedIn->flows['rest_required'] === 'true' || $checkedIn->flows['rest_required'] === 1 || $checkedIn->flows['rest_required'] === '1');
+                        $restNote = $checkedIn->flows['rest_note'] ?? '';
+                      @endphp
                       <div class="flex items-center gap-2 mb-2 space-y-1 ms-1">
                         <label class="flex items-center gap-2">
-                          <input type="checkbox" class="checkbox checkbox-xs" name="rest_required" value="1" />
+                          <input type="checkbox" class="checkbox checkbox-xs" id="boarding_rest_required" name="rest_required" value="1" {{ $restRequired ? 'checked' : '' }} />
                           <span class="text-sm">Rest Required (Senior Pet – 16 years old)</span>
                         </label>
+                      </div>
+                      <div class="ms-1">
+                        <p class="font-medium mb-1">Rest Note:</p>
+                        <textarea id="boarding_rest_note" class="textarea textarea-bordered w-full" rows="2" placeholder="Enter rest note..." {{ $restRequired ? '' : 'disabled' }}>{{ $restNote }}</textarea>
                       </div>
                       @endif
                     </div>
@@ -2843,6 +2851,19 @@
       saveBoardingCheckinData();
     });
 
+    $(document).on('change', '#boarding_rest_required', function() {
+      const checked = $(this).is(':checked');
+      $('#boarding_rest_note').prop('disabled', !checked);
+      if (!checked) {
+        $('#boarding_rest_note').val('');
+      }
+      saveBoardingCheckinData();
+    });
+
+    $(document).on('change input', '#boarding_rest_note', function() {
+      saveBoardingCheckinData();
+    });
+
     $(document).on('click', '#boarding_clear_signature', function() {
       clearBoardingSignaturePad();
       $('#boarding_signature_saved_note').addClass('hidden');
@@ -3810,6 +3831,8 @@
 
     const ownerName = ($('#boarding_owner_full_name').val() || '').trim();
     const signatureData = $('#boarding_signature_data').val() || null;
+    const restRequired = $('#boarding_rest_required').is(':checked');
+    const restNote = ($('#boarding_rest_note').val() || '').trim();
 
     const boardingData = {
       // Trip Information
@@ -3871,6 +3894,8 @@
         : null,
       medications_am: hasAm,
       medications_pm: hasPm,
+      rest_required: restRequired,
+      rest_note: restRequired ? (restNote || null) : null,
 
       boarding_agreement_accepted: $('#boarding_agreement_accepted').is(':checked'),
       boarding_vet_authorized: $('#boarding_vet_authorized').is(':checked'),
@@ -4526,6 +4551,27 @@
 
         function isPetInvolvedInStep(stepData) {
           if (!stepData || typeof stepData !== 'object') return false;
+          if ($('#boarding_workflow_steps_container').length && currentAppointmentId && stepData.process_type === 'rest_tlr') {
+            const ids = Array.isArray(stepData.selected_pet_ids)
+              ? stepData.selected_pet_ids.map(function(id) { return parseInt(id, 10); }).filter(function(id) { return !isNaN(id); })
+              : [];
+            const idMatch = ids.indexOf(currentAppointmentId) !== -1;
+            if (ids.length > 0) {
+              const treatmentPlanData = workflowData['treatment_plan'] && workflowData['treatment_plan'].treatment_data
+                ? (workflowData['treatment_plan'].treatment_data[aidStr] || workflowData['treatment_plan'].treatment_data[currentAppointmentId])
+                : null;
+              if (treatmentPlanData && typeof treatmentPlanData === 'object') {
+                const hasAssignedRest = treatmentPlanData.assign_rest === true || treatmentPlanData.assign_rest === 'true' || treatmentPlanData.assign_rest === 1 || treatmentPlanData.assign_rest === '1';
+                if (hasAssignedRest) return true;
+              }
+              return idMatch;
+            }
+            const treatmentPlanData = workflowData['treatment_plan'] && workflowData['treatment_plan'].treatment_data
+              ? (workflowData['treatment_plan'].treatment_data[aidStr] || workflowData['treatment_plan'].treatment_data[currentAppointmentId])
+              : null;
+            if (!treatmentPlanData || typeof treatmentPlanData !== 'object') return false;
+            return treatmentPlanData.assign_rest === true || treatmentPlanData.assign_rest === 'true' || treatmentPlanData.assign_rest === 1 || treatmentPlanData.assign_rest === '1';
+          }
           if (!stepData.selected_pet_ids || !Array.isArray(stepData.selected_pet_ids) || stepData.selected_pet_ids.length === 0) return true;
           if (!currentAppointmentId) return true;
           const ids = stepData.selected_pet_ids.map(function(id) { return parseInt(id, 10); }).filter(function(id) { return !isNaN(id); });
@@ -4568,6 +4614,17 @@
             if (parts.length === 1) return parts[0].replace(/^Option:\s*/, '').replace(/^Treatment:\s*/, '').replace(/^Detail:\s*/, '');
             return '';
           }
+          if (stepId === 'rest_tlr') {
+            const restSource = workflowData['treatment_plan'] && workflowData['treatment_plan'].treatment_data
+              ? (workflowData['treatment_plan'].treatment_data[aidStr] || workflowData['treatment_plan'].treatment_data[currentAppointmentId])
+              : null;
+            const restDetailFromPlan = (restSource && typeof restSource === 'object')
+              ? ((restSource.rest_detail || restSource.rest_details || restSource.detail_rest || '') + '').trim()
+              : '';
+            if (restDetailFromPlan) return restDetailFromPlan;
+            const restNotes = stepData && stepData.notes ? stepData.notes : {};
+            return ((restNotes[aidStr] || restNotes[currentAppointmentId] || '') + '').trim();
+          }
           const completed = stepData.completed_treatments && (stepData.completed_treatments[aidStr] != null ? stepData.completed_treatments[aidStr] : stepData.completed_treatments[currentAppointmentId]);
           if (stepId === 'treatment_list' && completed !== undefined) return completed === true || completed === 'true' ? 'Completed' : 'Not completed';
           // Treatments (TLR): two keys keep labels; single key show value only
@@ -4603,18 +4660,19 @@
           const stepData = workflowData[stepId];
           const stepAvailable = isNewFlowFormat && stepData && typeof stepData === 'object';
           const involved = isPetInvolvedInStep(stepData);
+          const restDetail = stepId === 'rest_tlr' ? getStepDetailForAppointment(stepId, stepData) : '';
           let timeStr = '—';
           let employeeStr = '';
           let detailStr = '';
           if (stepAvailable) {
             const t = stepData.process_time || stepData.processTime;
-            timeStr = t ? formatTimeDisplay(t) : '—';
-            employeeStr = getEmployeeDisplay(stepData);
-            detailStr = involved ? getStepDetailForAppointment(stepId, stepData) : '';
+            timeStr = (stepId === 'rest_tlr' && !involved) ? '—' : (t ? formatTimeDisplay(t) : '—');
+            employeeStr = (stepId === 'rest_tlr' && !involved) ? '' : getEmployeeDisplay(stepData);
+            detailStr = stepId === 'rest_tlr' ? (involved ? restDetail : '') : (involved ? getStepDetailForAppointment(stepId, stepData) : '');
           } else if (legacyTimeKeys[stepId] && workflowData[legacyTimeKeys[stepId]]) {
-            timeStr = formatTimeDisplay(workflowData[legacyTimeKeys[stepId]]);
-            employeeStr = response.staff_name || '';
-            detailStr = involved ? getStepDetailForAppointment(stepId, stepData) : '';
+            timeStr = (stepId === 'rest_tlr' && !involved) ? '—' : formatTimeDisplay(workflowData[legacyTimeKeys[stepId]]);
+            employeeStr = (stepId === 'rest_tlr' && !involved) ? '' : (response.staff_name || '');
+            detailStr = stepId === 'rest_tlr' ? (involved ? restDetail : '') : (involved ? getStepDetailForAppointment(stepId, stepData) : '');
           }
           $row.find('[data-display="time"]').text(timeStr);
           $row.find('[data-display="employee"]').text(employeeStr);

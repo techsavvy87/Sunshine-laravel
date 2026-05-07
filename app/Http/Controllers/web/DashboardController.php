@@ -21,6 +21,7 @@ use App\Models\Package;
 use App\Models\Discount;
 use App\Models\PetBehavior;
 use App\Models\IncidentReport;
+use App\Models\Kennel;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 
@@ -1195,6 +1196,10 @@ class DashboardController extends Controller
                 }
             }
 
+            if (! $scheduledRest && ! empty($flows['rest_required']) && ($flows['rest_required'] === true || $flows['rest_required'] === 'true' || $flows['rest_required'] === 1 || $flows['rest_required'] === '1')) {
+                $scheduledRest = true;
+            }
+
             $data[] = [
                 'appointment_id' => $appointmentId,
                 'pet_name' => $pet ? $pet->name : 'N/A',
@@ -1202,6 +1207,8 @@ class DashboardController extends Controller
                 'lunch_dry' => $lunchDry,
                 'lunch_wet' => $lunchWet,
                 'scheduled_rest' => $scheduledRest,
+                'rest_required' => ! empty($flows['rest_required']) && ($flows['rest_required'] === true || $flows['rest_required'] === 'true' || $flows['rest_required'] === 1 || $flows['rest_required'] === '1'),
+                'rest_note' => isset($flows['rest_note']) ? (string) $flows['rest_note'] : '',
                 'customer_name' => $appointment->customer && $appointment->customer->profile
                     ? $appointment->customer->profile->first_name . ' ' . $appointment->customer->profile->last_name
                     : 'N/A',
@@ -1623,6 +1630,131 @@ class DashboardController extends Controller
             $stayDuration = 'Not set';
         }
 
+        // Get kennel information
+        $kennel = null;
+        if ($appointment->kennel_id) {
+            $kennel = Kennel::find($appointment->kennel_id);
+        }
+        $kennelName = optional($kennel)->name ?? 'Not assigned';
+
+        // Extract feeding information
+        $dryFoodList = is_array($checkinFlows['dry_food_list'] ?? null) ? $checkinFlows['dry_food_list'] : [];
+        $wetFoodList = is_array($checkinFlows['wet_food_list'] ?? null) ? $checkinFlows['wet_food_list'] : [];
+        $ownerFood = $checkinFlows['owner_food'] ?? null;
+        $ownerFoodList = is_array($checkinFlows['owner_food_list'] ?? null) ? $checkinFlows['owner_food_list'] : [];
+        $feedingNotes = $checkinFlows['feeding_notes'] ?? null;
+        
+        // Fallback to legacy single food structure if lists are empty
+        if (empty($dryFoodList) && isset($checkinFlows['dry_food'])) {
+            $dryFoodList = [$checkinFlows['dry_food']];
+        }
+        if (empty($wetFoodList) && isset($checkinFlows['wet_food'])) {
+            $wetFoodList = [$checkinFlows['wet_food']];
+        }
+
+        // Extract medication information
+        $medicationList = is_array($checkinFlows['meds_list'] ?? null) ? $checkinFlows['meds_list'] : [];
+        if (empty($medicationList) && isset($checkinFlows['meds'])) {
+            $medicationList = [$checkinFlows['meds']];
+        }
+        $medicationNotes = $checkinFlows['medication_notes'] ?? null;
+
+        // Extract rest information
+        $restRequired = $isTruthy($checkinFlows['rest_required'] ?? null);
+        $restNote = $checkinFlows['rest_note'] ?? null;
+
+        $resolveSelectedTimes = function (array $item) use ($isTruthy) {
+            $labels = [];
+            if ($isTruthy($item['dispense_am'] ?? null)) {
+                $labels[] = 'AM';
+            }
+            if ($isTruthy($item['dispense_pm'] ?? null)) {
+                $labels[] = 'PM';
+            }
+            if ($isTruthy($item['dispense_lunch'] ?? null)) {
+                $labels[] = 'Lunch';
+            }
+            if ($isTruthy($item['dispense_rest'] ?? null)) {
+                $labels[] = 'During Rest';
+            }
+            if ($isTruthy($item['dispense_before_bed'] ?? null)) {
+                $labels[] = 'Before Sleep';
+            }
+            if ($isTruthy($item['dispense_custom_time'] ?? null)) {
+                $custom = trim((string) ($item['custom_time'] ?? ''));
+                $labels[] = $custom !== '' ? 'Custom Time: ' . $custom : 'Custom Time';
+            }
+
+            return array_values(array_unique($labels));
+        };
+
+        $dryFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
+            $item = is_array($item) ? $item : [];
+            $item['selected_times'] = $resolveSelectedTimes($item);
+            return $item;
+        }, $dryFoodList);
+
+        $wetFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
+            $item = is_array($item) ? $item : [];
+            $item['selected_times'] = $resolveSelectedTimes($item);
+            return $item;
+        }, $wetFoodList);
+
+        if (!empty($ownerFoodList)) {
+            $ownerFoodList = array_values(array_map(function ($item) use ($resolveSelectedTimes) {
+                $item = is_array($item) ? $item : ['value' => (string) $item];
+                $item['selected_times'] = $resolveSelectedTimes($item);
+                return $item;
+            }, $ownerFoodList));
+        } elseif (is_array($ownerFood)) {
+            $ownerFoodList = [[
+                'value' => trim((string) ($ownerFood['value'] ?? $ownerFood['details'] ?? $ownerFood['note'] ?? '')),
+                'selected_times' => $resolveSelectedTimes($ownerFood),
+            ]];
+        } elseif (is_string($ownerFood) && trim($ownerFood) !== '') {
+            $ownerFoodList = [[
+                'value' => trim($ownerFood),
+                'selected_times' => [],
+            ]];
+        }
+
+        $medicationList = array_map(function ($item) use ($resolveSelectedTimes) {
+            $item = is_array($item) ? $item : [];
+            $item['selected_times'] = $resolveSelectedTimes($item);
+
+            $conditions = [];
+            $mealCondition = trim((string) ($item['meal_condition'] ?? $item['condition'] ?? ''));
+            if ($mealCondition === 'after_meal') {
+                $conditions[] = 'After Meals';
+            } elseif ($mealCondition === 'before_meal') {
+                $conditions[] = 'Before Meals';
+            } elseif ($mealCondition === 'empty_stomach') {
+                $conditions[] = 'Empty Stomach';
+            }
+
+            $item['conditions_display'] = $conditions;
+            return $item;
+        }, $medicationList);
+
+        // Format check-in and pickup times
+        $checkinDateTime = 'Not set';
+        $pickupDateTime = 'Not set';
+        try {
+            if ($checkin && $checkin->created_at) {
+                $checkinDateTime = \Carbon\Carbon::parse($checkin->created_at)->format('M j, Y \a\t h:i A');
+            }
+        } catch (\Exception $e) {
+            $checkinDateTime = 'Not set';
+        }
+        
+        try {
+            if (!empty($appointment->end_date)) {
+                $pickupDateTime = \Carbon\Carbon::parse($appointment->end_date)->format('M j, Y');
+            }
+        } catch (\Exception $e) {
+            $pickupDateTime = 'Not set';
+        }
+
         $pdf = Pdf::loadView('archives.boarding-detail-report-pdf', [
             'appointment' => $appointment,
             'showPetStayInfo' => true,
@@ -1631,6 +1763,18 @@ class DashboardController extends Controller
             'isSenior' => $isSenior,
             'medicationRequired' => $medicationRequired,
             'behaviorLabels' => $behaviorLabels,
+            'kennelName' => $kennelName,
+            'checkinDateTime' => $checkinDateTime,
+            'pickupDateTime' => $pickupDateTime,
+            'dryFoodList' => $dryFoodList,
+            'wetFoodList' => $wetFoodList,
+            'ownerFood' => $ownerFood,
+            'ownerFoodList' => $ownerFoodList,
+            'feedingNotes' => $feedingNotes,
+            'medicationList' => $medicationList,
+            'medicationNotes' => $medicationNotes,
+            'restRequired' => $restRequired,
+            'restNote' => $restNote,
         ]);
 
         $fileName = 'Boarding_Report_' . $appointment->pet->name . '_' . date('Y-m-d', strtotime($appointment->date)) . '.pdf';

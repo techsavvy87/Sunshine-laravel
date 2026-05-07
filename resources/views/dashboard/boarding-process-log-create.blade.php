@@ -348,8 +348,53 @@
   let workflowData = {};
   let lastLunchCheckinData = null;
   let lastRestCheckinData = null;
+  let checkinRestMetaByAppointmentId = {};
+  let isLoadingCheckinRestMeta = false;
   let yesterdayNextDayPetIds = [];
   let yesterdayReportsPmIssues = {};
+
+  function updateCheckinRestMetaFromData(checkinData) {
+    if (!Array.isArray(checkinData)) return;
+    checkinData.forEach(function(item) {
+      const aid = parseInt(item.appointment_id, 10);
+      if (isNaN(aid)) return;
+      const restRequired = item.rest_required === true || item.rest_required === 'true' || item.rest_required === 1 || item.rest_required === '1';
+      const scheduledRest = item.scheduled_rest === true || item.scheduled_rest === 'true' || item.scheduled_rest === 1 || item.scheduled_rest === '1';
+      checkinRestMetaByAppointmentId[String(aid)] = {
+        is_assigned: restRequired || scheduledRest,
+        rest_note: ((item.rest_note || '') + '').trim()
+      };
+    });
+  }
+
+  function ensureCheckinRestMetaLoaded() {
+    if (isLoadingCheckinRestMeta) return;
+    if (!selectedAppointmentIds || selectedAppointmentIds.length === 0) return;
+    const hasMissing = selectedAppointmentIds.some(function(id) {
+      return !(String(id) in checkinRestMetaByAppointmentId);
+    });
+    if (!hasMissing) return;
+
+    isLoadingCheckinRestMeta = true;
+    $.ajax({
+      url: '{{ route("boarding-process-log-get-checkin-data") }}',
+      method: 'POST',
+      data: {
+        _token: '{{ csrf_token() }}',
+        appointment_ids: selectedAppointmentIds
+      },
+      success: function(response) {
+        const data = response && response.success && Array.isArray(response.data) ? response.data : [];
+        updateCheckinRestMetaFromData(data);
+        if (currentProcessItem === 'treatment_plan') {
+          renderTreatmentPlanForm();
+        }
+      },
+      complete: function() {
+        isLoadingCheckinRestMeta = false;
+      }
+    });
+  }
 
   const tabProcesses = {
     'am-feeding-meds': [
@@ -1001,6 +1046,8 @@
   }
 
   function renderTreatmentPlanForm() {
+    ensureCheckinRestMetaLoaded();
+
     // Get saved treatment plan data
     const currentData = workflowData[currentProcessItem] || {};
     const savedTreatmentData = currentData.treatment_data || {};
@@ -1061,7 +1108,7 @@
     });
     
     // Build table header
-    const headerHtml = '<tr><th style="min-width: 200px;">Pet Name</th><th style="min-width: 200px;">Customer</th><th style="min-width: 200px;">Issue</th><th style="min-width: 200px;">Option</th><th style="min-width: 200px;">Treatment</th><th style="min-width: 300px;">Detail</th><th style="min-width: 110px;">Assign Rest</th></tr>';
+    const headerHtml = '<tr><th style="min-width: 200px;">Pet Name</th><th style="min-width: 200px;">Customer</th><th style="min-width: 200px;">Issue</th><th style="min-width: 200px;">Option</th><th style="min-width: 200px;">Treatment</th><th style="min-width: 300px;">Detail</th><th style="min-width: 110px;">Assign Rest</th><th style="min-width: 300px;">Rest Detail</th></tr>';
     $('#treatment_plan_thead').html(headerHtml);
     
     // Build table body
@@ -1105,6 +1152,11 @@
         const savedOption = savedPetData.option || '';
         const savedDetail = savedPetData.detail || '';
         const savedAssignRest = savedPetData.assign_rest === true || savedPetData.assign_rest === 'true' || savedPetData.assign_rest === 1 || savedPetData.assign_rest === '1';
+        const savedRestDetail = savedPetData.rest_detail || '';
+        const checkinRestData = checkinRestMetaByAppointmentId[String(appointmentId)] || {};
+        const isRestAssignedFromCheckin = checkinRestData.is_assigned === true;
+        const effectiveAssignRest = isRestAssignedFromCheckin ? true : savedAssignRest;
+        const effectiveRestDetail = isRestAssignedFromCheckin ? (savedRestDetail || checkinRestData.rest_note || '') : savedRestDetail;
         const savedAdditionalOptions = Array.isArray(savedPetData.additional_options)
           ? savedPetData.additional_options
           : (savedPetData.additional_option ? [savedPetData.additional_option] : []);
@@ -1178,10 +1230,17 @@
         bodyHtml += `
           <td style="text-align: center;">
             <label class="label cursor-pointer justify-center py-0">
-              <input type="checkbox" id="assign_rest_${appointmentId}" class="checkbox checkbox-sm" ${savedAssignRest ? 'checked' : ''} />
+              <input type="checkbox" id="assign_rest_${appointmentId}" class="checkbox checkbox-sm" ${effectiveAssignRest ? 'checked' : ''} ${isRestAssignedFromCheckin ? 'disabled' : ''} />
             </label>
           </td>
         `;
+        
+        bodyHtml += `
+          <td>
+            <textarea id="rest_detail_${appointmentId}" class="textarea textarea-bordered textarea-sm w-full" rows="2" style="min-height: 2rem;" placeholder="Enter rest details..." ${isRestAssignedFromCheckin ? 'disabled' : ''}>${effectiveRestDetail ? effectiveRestDetail.replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''}</textarea>
+          </td>
+        `;
+
         
         bodyHtml += '</tr>';
       });
@@ -1498,7 +1557,7 @@
       return false;
     }
     $('#treatment_lunch_rest_form_container').show();
-    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 200px;">Issue</th><th style="min-width: 220px;">Treatment</th><th style="min-width: 280px;">Treatment Plan Detail</th><th style="min-width: 220px;">Result</th><th style="min-width: 300px;">Detail</th></tr>');
+    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 200px;">Issue</th><th style="min-width: 220px;">Treatment</th><th style="min-width: 280px;">Treatment Plan Detail</th><th style="min-width: 220px;">Result</th></tr>');
     let bodyHtml = '';
     treatmentListBasePetIds.forEach(appointmentId => {
         const pet = appointmentToPetMap[appointmentId];
@@ -1524,7 +1583,7 @@
         const treatmentPlanDetail = (petTreatmentData.detail || petTreatmentData.details || '').trim() || '-';
         const saved = savedResults[appointmentId] || {};
         const resultVal = saved.result || '';
-        const detailVal = saved.detail || '';
+        const escalateDetailVal = saved.detail || '';
         bodyHtml += `<tr class="hover:bg-base-200" data-appointment-id="${appointmentId}">`;
         bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${petAvatarUrl}" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.pet_name || 'N/A'}</span></div></td>`;
         bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${customerAvatarUrl}" alt="Customer" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.customer_name || 'N/A'}</span></div></td>`;
@@ -1535,11 +1594,21 @@
         bodyHtml += `<label class="label cursor-pointer gap-1 py-0 min-h-0"><input type="radio" name="result_tlr_${appointmentId}" value="continue" class="radio radio-xs radio-primary" ${resultVal === 'continue' ? 'checked' : ''} /><span class="label-text text-xs">Continue</span></label>`;
         bodyHtml += `<label class="label cursor-pointer gap-1 py-0 min-h-0"><input type="radio" name="result_tlr_${appointmentId}" value="resolved" class="radio radio-xs radio-primary" ${resultVal === 'resolved' ? 'checked' : ''} /><span class="label-text text-xs">Resolved</span></label>`;
         bodyHtml += `<label class="label cursor-pointer gap-1 py-0 min-h-0"><input type="radio" name="result_tlr_${appointmentId}" value="escalate" class="radio radio-xs radio-primary" ${resultVal === 'escalate' ? 'checked' : ''} /><span class="label-text text-xs">Escalate</span></label>`;
-        bodyHtml += `</div></td>`;
-        bodyHtml += `<td><textarea class="textarea textarea-bordered textarea-sm w-full detail-tlr" rows="3" style="height: 3.5rem;" data-appointment-id="${appointmentId}" placeholder="Detail...">${(detailVal || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea></td>`;
+        bodyHtml += `</div><div class="escalate-detail-wrap mt-2 ${resultVal === 'escalate' ? '' : 'hidden'}" data-appointment-id="${appointmentId}"><textarea class="textarea textarea-bordered textarea-sm w-full escalate-detail-tlr" rows="2" style="min-height: 2rem;" data-appointment-id="${appointmentId}" placeholder="Escalate detail...">${(escalateDetailVal || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea></div></td>`;
         bodyHtml += '</tr>';
     });
     $('#treatment_lunch_rest_tbody').html(bodyHtml);
+    $('input[type="radio"][name^="result_tlr_"]').off('change').on('change', function() {
+      const match = (this.name || '').match(/^result_tlr_(.+)$/);
+      if (!match) return;
+      const appointmentId = match[1];
+      const isEscalate = $(this).val() === 'escalate' && $(this).is(':checked');
+      const $wrap = $(`.escalate-detail-wrap[data-appointment-id="${appointmentId}"]`);
+      $wrap.toggleClass('hidden', !isEscalate);
+      if (!isEscalate) {
+        $wrap.find('.escalate-detail-tlr').val('');
+      }
+    });
     return true;
   }
 
@@ -1559,9 +1628,12 @@
     const prevStepProcessTime = checkPetDataForTime.process_time || checkPetDataForTime.processTime || treatmentPlanDataForTime.process_time || treatmentPlanDataForTime.processTime || '';
     const reportedDisplay = prevStepProcessTime || '-';
     const currentData = workflowData['next_day_treatment_list_tlr'] || {};
-    const savedVetVisit = currentData.vet_visit || {};
     const savedSelected = currentData.selected_pet_ids || [];
-    const savedResults = currentData.results || {};
+    const checkPetData = workflowData['check_pet'] || {};
+    const checkPetCheckData = checkPetData.check_data || {};
+    const treatmentPlanTreatmentData = treatmentPlanData.treatment_data || {};
+    const yesterdayIds = (yesterdayNextDayPetIds || []).map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    const reportsAmIdsRender = ((workflowData['reports_am'] || {}).selected_pet_ids || []).map(id => parseInt(id, 10)).filter(id => !isNaN(id));
 
     $('#dne_list_search_bar').hide();
     $('#rest_nose_to_tail_inline').hide();
@@ -1577,22 +1649,40 @@
       return false;
     }
     $('#treatment_lunch_rest_form_container').show();
-    $('#treatment_lunch_rest_thead').html('<tr><th style="width: 50px;"><input class="checkbox checkbox-sm" id="select_all_next_day_tlr" type="checkbox" /></th><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 180px;">Reported</th><th style="min-width: 120px;">Vet Visit</th></tr>');
+    $('#treatment_lunch_rest_thead').html('<tr><th style="width: 50px;"><input class="checkbox checkbox-sm" id="select_all_next_day_tlr" type="checkbox" /></th><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 180px;">Reported</th><th style="min-width: 200px;">Issue</th><th style="min-width: 220px;">Treatment</th><th style="min-width: 260px;">Notes</th></tr>');
     let bodyHtml = '';
     nextDayPetIds.forEach(appointmentId => {
         const pet = appointmentToPetMap[appointmentId];
         if (!pet) return;
         const petAvatarUrl = pet.pet_img ? '{{ asset("storage/pets/") }}/' + pet.pet_img : '{{ asset("images/no_image.jpg") }}';
         const customerAvatarUrl = pet.customer_avatar ? '{{ asset("storage/profiles/") }}/' + pet.customer_avatar : '{{ asset("images/default-user-avatar.png") }}';
-        const vetVisitChecked = savedVetVisit[appointmentId] === true || savedVetVisit[appointmentId] === 'true';
+        const resultData = treatmentsTlrResults[appointmentId] || {};
+        const resultVal = resultData.result || '';
+        const aid = parseInt(appointmentId, 10);
+        const inTreatmentPlan = treatmentPlanPetIds.indexOf(aid) !== -1 || treatmentPlanPetIds.indexOf(String(appointmentId)) !== -1;
+        const fromYesterdayList = !inTreatmentPlan && yesterdayIds.indexOf(aid) !== -1;
+        const fromReportsAmOnly = !inTreatmentPlan && reportsAmIdsRender.indexOf(aid) !== -1 && !fromYesterdayList;
+        const petCheckData = checkPetCheckData[appointmentId] || {};
+        const issues = [];
+        if (inTreatmentPlan) {
+          Object.keys(petCheckData).forEach(partKey => {
+            if (petCheckData[partKey].status === 'issue') issues.push(bodyPartsMapTLR[partKey] || partKey);
+          });
+        }
+        const issuesText = inTreatmentPlan ? (issues.join(', ') || 'No issues') : (fromReportsAmOnly ? 'Do not eat AM Meals' : 'Carried from previous day');
+        const petTreatmentData = treatmentPlanTreatmentData[appointmentId] || {};
+        const treatmentSelections = getTreatmentPlanSelectionValues(petTreatmentData);
+        const treatmentSelectionText = treatmentSelections.length > 0 ? treatmentSelections.join(', ') : '-';
+        const notesText = resultVal === 'continue' ? 'Continue monitoring' : ((resultData.detail || '').trim() || '—');
         const rowChecked = savedSelected.length ? savedSelected.includes(parseInt(appointmentId)) : false;
         bodyHtml += `<tr class="hover:bg-base-200" data-appointment-id="${appointmentId}">`;
         bodyHtml += `<td><input class="checkbox checkbox-sm next-day-row-tlr" type="checkbox" data-appointment-id="${appointmentId}" ${rowChecked ? 'checked' : ''} /></td>`;
         bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${petAvatarUrl}" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.pet_name || 'N/A'}</span></div></td>`;
         bodyHtml += `<td><div class="flex items-center space-x-3"><img src="${customerAvatarUrl}" alt="Customer" class="mask mask-squircle bg-base-200 size-10" /><span>${pet.customer_name || 'N/A'}</span></div></td>`;
         bodyHtml += `<td><span class="text-sm text-base-content/80">${reportedDisplay}</span></td>`;
-        // removed Result column
-        bodyHtml += `<td><input class="checkbox checkbox-sm vet-visit-tlr" type="checkbox" data-appointment-id="${appointmentId}" ${vetVisitChecked ? 'checked' : ''} /></td>`;
+        bodyHtml += `<td><span class="text-sm">${issuesText}</span></td>`;
+        bodyHtml += `<td><span class="text-sm">${treatmentSelectionText !== '-' ? treatmentSelectionText.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '-'}</span></td>`;
+        bodyHtml += `<td><span class="text-sm">${notesText !== '—' ? notesText.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '—'}</span></td>`;
         bodyHtml += '</tr>';
       });
     $('#treatment_lunch_rest_tbody').html(bodyHtml);
@@ -1837,13 +1927,20 @@
       .filter(function(id) {
         if (isNaN(id)) return false;
         const petTreatmentData = treatmentDataForRest[id] || treatmentDataForRest[String(id)] || {};
-        return petTreatmentData.assign_rest === true;
+        return petTreatmentData.assign_rest === true || petTreatmentData.assign_rest === 'true' || petTreatmentData.assign_rest === 1 || petTreatmentData.assign_rest === '1';
       });
     let restScheduledIds = [];
+    const checkinRestMeta = {};
     if (checkinData && Array.isArray(checkinData)) {
       checkinData.forEach(function(item) {
+        const aid = parseInt(item.appointment_id, 10);
+        if (!isNaN(aid)) {
+          checkinRestMeta[String(aid)] = {
+            rest_required: item.rest_required === true || item.rest_required === 'true' || item.rest_required === 1 || item.rest_required === '1',
+            rest_note: ((item.rest_note || '') + '').trim()
+          };
+        }
         if (item.scheduled_rest === true || item.scheduled_rest === 'true') {
-          const aid = parseInt(item.appointment_id, 10);
           if (!isNaN(aid) && appointmentToPetMap[aid]) restScheduledIds.push(aid);
         }
       });
@@ -1851,7 +1948,7 @@
     const allRestIds = [...new Set([...assignRestIds, ...restScheduledIds])];
     const assignRestSet = new Set(assignRestIds.map(function(id) { return String(id); }));
 
-    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 280px;">Issue</th></tr>');
+    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 280px;">Issue</th><th style="min-width: 300px;">Rest Detail</th></tr>');
     let bodyHtml = '';
     if (allRestIds.length === 0) {
       $('#treatment_lunch_rest_form_container').hide();
@@ -1869,16 +1966,21 @@
         const pet = appointmentToPetMap[appointmentId];
         if (!pet) return;
         const fromAssignRest = assignRestSet.has(String(appointmentId));
+        const petTreatmentData = treatmentDataForRest[appointmentId] || treatmentDataForRest[String(appointmentId)] || {};
+        const checkinRestData = checkinRestMeta[String(appointmentId)] || {};
         const petCheckData = checkPetCheckData[appointmentId] || {};
         let issuesText = '—';
+        let restDetailText = '—';
         if (fromAssignRest) {
           const issues = [];
           Object.keys(petCheckData).forEach(function(partKey) {
             if (petCheckData[partKey].status === 'issue') issues.push(bodyPartsMapTLR[partKey] || partKey);
           });
           issuesText = issues.join(', ') || '—';
+          restDetailText = ((petTreatmentData.rest_detail || '') + '').trim() || '—';
         } else {
           issuesText = 'Scheduled rest';
+          restDetailText = checkinRestData.rest_note || '—';
         }
         const petAvatarUrl = pet.pet_img ? '{{ asset("storage/pets/") }}/' + pet.pet_img : '{{ asset("images/no_image.jpg") }}';
         const customerAvatarUrl = pet.customer_avatar ? '{{ asset("storage/profiles/") }}/' + pet.customer_avatar : '{{ asset("images/default-user-avatar.png") }}';
@@ -1886,6 +1988,7 @@
         bodyHtml += '<td><div class="flex items-center space-x-3"><img src="' + petAvatarUrl + '" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>' + (pet.pet_name || 'N/A') + '</span></div></td>';
         bodyHtml += '<td><div class="flex items-center space-x-3"><img src="' + customerAvatarUrl + '" alt="Customer" class="mask mask-squircle bg-base-200 size-10" /><span>' + (pet.customer_name || 'N/A') + '</span></div></td>';
         bodyHtml += '<td><span class="text-sm">' + (issuesText.replace(/</g, '&lt;').replace(/>/g, '&gt;')) + '</span></td>';
+        bodyHtml += '<td><span class="text-sm">' + (restDetailText.replace(/</g, '&lt;').replace(/>/g, '&gt;')) + '</span></td>';
         bodyHtml += '</tr>';
       });
     }
@@ -1917,13 +2020,20 @@
       .filter(function(id) {
         if (isNaN(id)) return false;
         const petTreatmentData = treatmentDataForRest[id] || treatmentDataForRest[String(id)] || {};
-        return petTreatmentData.assign_rest === true;
+        return petTreatmentData.assign_rest === true || petTreatmentData.assign_rest === 'true' || petTreatmentData.assign_rest === 1 || petTreatmentData.assign_rest === '1';
       });
     let restScheduledIds = [];
+    const checkinRestMeta = {};
     if (checkinData && Array.isArray(checkinData)) {
       checkinData.forEach(function(item) {
+        const aid = parseInt(item.appointment_id, 10);
+        if (!isNaN(aid)) {
+          checkinRestMeta[String(aid)] = {
+            rest_required: item.rest_required === true || item.rest_required === 'true' || item.rest_required === 1 || item.rest_required === '1',
+            rest_note: ((item.rest_note || '') + '').trim()
+          };
+        }
         if (item.scheduled_rest === true || item.scheduled_rest === 'true') {
-          const aid = parseInt(item.appointment_id, 10);
           if (!isNaN(aid) && appointmentToPetMap[aid]) restScheduledIds.push(aid);
         }
       });
@@ -1931,25 +2041,30 @@
     const allRestIds = [...new Set([...assignRestIds, ...restScheduledIds])];
     const assignRestSet = new Set(assignRestIds.map(function(id) { return String(id); }));
 
-    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 280px;">Issue</th></tr>');
+    $('#treatment_lunch_rest_thead').html('<tr><th style="min-width: 200px;">Pet</th><th style="min-width: 200px;">Customer</th><th style="min-width: 280px;">Issue</th><th style="min-width: 300px;">Rest Detail</th></tr>');
     let bodyHtml = '';
     if (allRestIds.length === 0) {
-      bodyHtml = '<tr data-empty><td colspan="3" class="text-center p-4 text-base-content/70">No pets with Assign Rest selected in Treatment Plan and no pets scheduled for Rest.</td></tr>';
+      bodyHtml = '<tr data-empty><td colspan="4" class="text-center p-4 text-base-content/70">No pets with Assign Rest selected in Treatment Plan and no pets scheduled for Rest.</td></tr>';
     } else {
       allRestIds.forEach(function(appointmentId) {
         const pet = appointmentToPetMap[appointmentId];
         if (!pet) return;
         const fromAssignRest = assignRestSet.has(String(appointmentId));
+        const petTreatmentData = treatmentDataForRest[appointmentId] || treatmentDataForRest[String(appointmentId)] || {};
+        const checkinRestData = checkinRestMeta[String(appointmentId)] || {};
         const petCheckData = checkPetCheckData[appointmentId] || {};
         let issuesText = '—';
+        let restDetailText = '—';
         if (fromAssignRest) {
           const issues = [];
           Object.keys(petCheckData).forEach(function(partKey) {
             if (petCheckData[partKey].status === 'issue') issues.push(bodyPartsMapTLR[partKey] || partKey);
           });
           issuesText = issues.join(', ') || '—';
+          restDetailText = ((petTreatmentData.rest_detail || '') + '').trim() || '—';
         } else {
           issuesText = 'Scheduled rest';
+          restDetailText = checkinRestData.rest_note || '—';
         }
         const petAvatarUrl = pet.pet_img ? '{{ asset("storage/pets/") }}/' + pet.pet_img : '{{ asset("images/no_image.jpg") }}';
         const customerAvatarUrl = pet.customer_avatar ? '{{ asset("storage/profiles/") }}/' + pet.customer_avatar : '{{ asset("images/default-user-avatar.png") }}';
@@ -1959,6 +2074,7 @@
         bodyHtml += '<td><div class="flex items-center space-x-3"><img src="' + petAvatarUrl + '" alt="Pet" class="mask mask-squircle bg-base-200 size-10" /><span>' + (pet.pet_name || 'N/A') + '</span></div></td>';
         bodyHtml += '<td><div class="flex items-center space-x-3"><img src="' + customerAvatarUrl + '" alt="Customer" class="mask mask-squircle bg-base-200 size-10" /><span>' + (pet.customer_name || 'N/A') + '</span></div></td>';
         bodyHtml += '<td><span class="text-sm">' + (issuesText.replace(/</g, '&lt;').replace(/>/g, '&gt;')) + '</span></td>';
+        bodyHtml += '<td><span class="text-sm">' + (restDetailText.replace(/</g, '&lt;').replace(/>/g, '&gt;')) + '</span></td>';
         bodyHtml += '</tr>';
       });
     }
@@ -2406,13 +2522,22 @@
         const option = $(`input[name="treatment_option_${appointmentId}"]:checked`).val() || '';
         const additionalOptions = $(`#treatment_multi_${appointmentId}`).val() || [];
         const detail = $(`#treatment_detail_${appointmentId}`).val() || '';
-        const assignRest = $(`#assign_rest_${appointmentId}`).is(':checked');
+        let restDetail = $(`#rest_detail_${appointmentId}`).val() || '';
+        let assignRest = $(`#assign_rest_${appointmentId}`).is(':checked');
+        const checkinRestData = checkinRestMetaByAppointmentId[String(appointmentId)] || {};
+        if (checkinRestData.is_assigned === true) {
+          assignRest = true;
+          if (!restDetail.trim()) {
+            restDetail = checkinRestData.rest_note || '';
+          }
+        }
         
         treatmentPlanData[appointmentId] = {
           option: option,
           additional_options: Array.isArray(additionalOptions) ? additionalOptions : (additionalOptions ? [additionalOptions] : []),
           selected_treatments: Array.isArray(additionalOptions) ? additionalOptions : (additionalOptions ? [additionalOptions] : []),
           detail: detail,
+          rest_detail: restDetail,
           assign_rest: assignRest
         };
       });
@@ -2441,6 +2566,40 @@
         if (note) lunchNotes[aid] = note;
       });
       workflowData[currentProcessItem].notes = lunchNotes;
+    } else if (currentProcessItem === 'rest_tlr') {
+      const treatmentPlanDataForRest = workflowData['treatment_plan'] || {};
+      const treatmentDataForRest = treatmentPlanDataForRest.treatment_data || {};
+      const assignRestIds = (treatmentPlanDataForRest.selected_pet_ids || [])
+        .map(function(id) { return parseInt(id, 10); })
+        .filter(function(id) {
+          if (isNaN(id)) return false;
+          const petTreatmentData = treatmentDataForRest[id] || treatmentDataForRest[String(id)] || {};
+          return petTreatmentData.assign_rest === true || petTreatmentData.assign_rest === 'true' || petTreatmentData.assign_rest === 1 || petTreatmentData.assign_rest === '1';
+        });
+      let restScheduledIds = [];
+      const restNotes = {};
+      assignRestIds.forEach(function(aid) {
+        const petTreatmentData = treatmentDataForRest[aid] || treatmentDataForRest[String(aid)] || {};
+        const detailText = ((petTreatmentData.rest_detail || '') + '').trim();
+        if (detailText) restNotes[aid] = detailText;
+      });
+      if (lastRestCheckinData && Array.isArray(lastRestCheckinData)) {
+        lastRestCheckinData.forEach(function(item) {
+          if (item.scheduled_rest === true || item.scheduled_rest === 'true') {
+            const aid = parseInt(item.appointment_id, 10);
+            if (!isNaN(aid) && appointmentToPetMap[aid]) {
+              restScheduledIds.push(aid);
+              const checkinRestNote = ((item.rest_note || '') + '').trim();
+              if (!restNotes[aid] && checkinRestNote) restNotes[aid] = checkinRestNote;
+            }
+          }
+        });
+      }
+      const allRestIds = [...new Set([...assignRestIds, ...restScheduledIds])];
+      if (!workflowData[currentProcessItem]) workflowData[currentProcessItem] = {};
+      workflowData[currentProcessItem].selected_pet_ids = allRestIds;
+      workflowData[currentProcessItem].process_type = currentProcessItem;
+      workflowData[currentProcessItem].notes = restNotes;
     } else if (currentProcessItem === 'treatment_list_tlr') {
       const treatmentListBasePetIds = getTreatmentListBasePetIds();
       const treatmentPlanData = workflowData['treatment_plan'] || {};
@@ -2465,10 +2624,23 @@
         alert_modal.showModal();
         return;
       }
+      const missingEscalateDetails = [];
+      treatmentListBasePetIds.forEach(appointmentId => {
+        const result = $(`input[name="result_tlr_${appointmentId}"]:checked`).val() || '';
+        if (result === 'escalate') {
+          const detail = $(`.escalate-detail-tlr[data-appointment-id="${appointmentId}"]`).val() || '';
+          if (!detail.trim()) missingEscalateDetails.push(appointmentId);
+        }
+      });
+      if (missingEscalateDetails.length > 0) {
+        $('#alert_message').text('Please enter escalate detail for all pets marked as Escalate.');
+        alert_modal.showModal();
+        return;
+      }
       const results = {};
       treatmentListBasePetIds.forEach(appointmentId => {
         const result = $(`input[name="result_tlr_${appointmentId}"]:checked`).val() || '';
-        const detail = $(`.detail-tlr[data-appointment-id="${appointmentId}"]`).val() || '';
+        const detail = result === 'escalate' ? ($(`.escalate-detail-tlr[data-appointment-id="${appointmentId}"]`).val() || '').trim() : '';
         results[appointmentId] = { result, detail };
       });
       if (!workflowData[currentProcessItem]) workflowData[currentProcessItem] = {};
@@ -2489,7 +2661,6 @@
       const prevProcessTime = checkPetDataForTime.process_time || checkPetDataForTime.processTime || treatmentPlanDataForTime.process_time || treatmentPlanDataForTime.processTime || '00:00';
       const selectedIds = [];
       const reported = {};
-      const vetVisit = {};
       const results = {};
       $('.next-day-row-tlr').each(function() {
         const appointmentId = $(this).data('appointment-id');
@@ -2499,18 +2670,13 @@
         }
       });
       nextDayPetIds.forEach(function(appointmentId) {
-        const selectedResult = $(`input[name="next_day_result_tlr_${appointmentId}"]:checked`).val() || '';
-        results[appointmentId] = { result: selectedResult, detail: '' };
-      });
-      $('.vet-visit-tlr').each(function() {
-        const appointmentId = $(this).data('appointment-id');
-        vetVisit[appointmentId] = $(this).is(':checked');
+        const sourceResult = treatmentsTlrResults[appointmentId] || {};
+        results[appointmentId] = { result: sourceResult.result || '', detail: sourceResult.detail || '' };
       });
       if (!workflowData[currentProcessItem]) workflowData[currentProcessItem] = {};
       workflowData[currentProcessItem].selected_pet_ids = selectedIds;
       workflowData[currentProcessItem].process_type = currentProcessItem;
       workflowData[currentProcessItem].reported = reported;
-      workflowData[currentProcessItem].vet_visit = vetVisit;
       workflowData[currentProcessItem].results = results;
     } else if (currentProcessItem === 'dne_list_am' || currentProcessItem === 'dne_list_pm') {
       if (!workflowData[currentProcessItem]) workflowData[currentProcessItem] = {};

@@ -1823,6 +1823,8 @@ class AppointmentController extends Controller
 
     public function getProcessFlows(Request $request, $id)
     {
+        $appointment = Appointment::with('service')->find($id);
+
         if ($request->input('get_used_dates')) {
             $usedDates = Process::where('appointment_id', $id)
                 ->whereNotNull('date')
@@ -1859,7 +1861,7 @@ class AppointmentController extends Controller
                     ->first();
             }
 
-            if (!$process) {
+            if (! $process) {
                 return response()->json([
                     'flows' => [],
                     'staff_id' => null,
@@ -1877,6 +1879,10 @@ class AppointmentController extends Controller
                 if (is_array($decodedFlows)) {
                     $flows = $decodedFlows;
                 }
+            }
+
+            if ($appointment && isBoardingService($appointment->service) && ! $serviceId) {
+                $flows = $this->mergeBoardingWorkflowFlowsForDate($workflowDate, (int) $appointment->service_id, $flows);
             }
 
             // Get staff name
@@ -2017,6 +2023,61 @@ class AppointmentController extends Controller
                 'notes' => $process->notes
             ]);
         }
+    }
+
+    private function mergeBoardingWorkflowFlowsForDate(string $workflowDate, int $serviceId, array $baseFlows): array
+    {
+        $mergedFlows = $baseFlows;
+
+        $peerProcesses = Process::with('appointment.service')
+            ->where('date', $workflowDate)
+            ->whereHas('appointment', function ($query) use ($serviceId) {
+                $query->where('service_id', $serviceId);
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('created_at')
+            ->get();
+
+        foreach ($peerProcesses as $peerProcess) {
+            if (! $peerProcess->appointment || ! isBoardingService($peerProcess->appointment->service)) {
+                continue;
+            }
+
+            $peerFlows = $peerProcess->flows ? json_decode($peerProcess->flows, true) : [];
+            if (! is_array($peerFlows)) {
+                continue;
+            }
+
+            $mergedFlows = $this->mergeBoardingWorkflowArrays($mergedFlows, $peerFlows);
+        }
+
+        return $mergedFlows;
+    }
+
+    private function mergeBoardingWorkflowArrays(array $base, array $incoming): array
+    {
+        foreach ($incoming as $key => $value) {
+            if (! array_key_exists($key, $base)) {
+                $base[$key] = $value;
+                continue;
+            }
+
+            if ($key === 'selected_pet_ids' && is_array($value) && is_array($base[$key])) {
+                $base[$key] = array_values(array_unique(array_merge($base[$key], $value), SORT_REGULAR));
+                continue;
+            }
+
+            if (is_array($base[$key]) && is_array($value)) {
+                $base[$key] = $this->mergeBoardingWorkflowArrays($base[$key], $value);
+                continue;
+            }
+
+            if ($base[$key] === null || $base[$key] === '' || $base[$key] === []) {
+                $base[$key] = $value;
+            }
+        }
+
+        return $base;
     }
 
     public function confirmInProgress(Request $request, $id)
