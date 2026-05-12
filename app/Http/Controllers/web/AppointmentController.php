@@ -2369,9 +2369,8 @@ class AppointmentController extends Controller
             }
         }
 
-        $estimatedPrice = floatval($appointment->estimated_price ?? 0);
         $discountAmount = floatval($discountInfo['discount_amount'] ?? 0);
-        $subtotalAmount = max(0, $estimatedPrice - $discountAmount + $totalInventoryAmount);
+        $subtotalAmount = max(0, $totalServicePrice - $discountAmount + $totalInventoryAmount);
         $stateTaxRate = isBoardingService($appointment->service) ? floatval(config('billing.state_tax_rate', 7)) : 0;
         $stateTaxAmount = round($subtotalAmount * ($stateTaxRate / 100), 2);
         $totalAmount = $subtotalAmount + $stateTaxAmount;
@@ -2388,7 +2387,7 @@ class AppointmentController extends Controller
             'additional_service_items' => $additionalServiceItems,
             'inventory_items' => $inventoryItems,
             'total_service_price' => $totalServicePrice,
-            'estimated_price' => $estimatedPrice,
+            'estimated_price' => $totalServicePrice,
             'discount_title' => $discountInfo['discount_title'] ?? null,
             'discount_amount' => $discountAmount,
             'total_inventory_amount' => $totalInventoryAmount,

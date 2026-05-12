@@ -1834,10 +1834,17 @@
                         <legend class="fieldset-legend">Estimated Price{{ isBoardingService($appointment->service) ? ' (incl. tax)' : '' }}*</legend>
                         <label class="input w-full focus:outline-0 input-sm">
                           @php
-                            $estimatedPriceValue = $appointment->estimated_price ?? $dbEstimatedPrice ?? '';
+                            $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
+                              ? (float) $dbEstimatedPrice
+                              : (float) ($appointment->estimated_price ?? 0);
                             $checkinStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
-                            $estimatedPriceDisplayValue = $estimatedPriceValue !== ''
-                              ? ((float) $estimatedPriceValue * (1 + ($checkinStateTaxRate / 100)))
+                            $checkinBoardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
+                            $checkinDiscountAmount = floatval($checkinBoardingPricing['family_discount_amount'] ?? 0);
+                            $checkinNetPrice = isBoardingService($appointment->service)
+                              ? max(0, $estimatedPriceValue - $checkinDiscountAmount)
+                              : $estimatedPriceValue;
+                            $estimatedPriceDisplayValue = $estimatedPriceValue > 0
+                              ? ($checkinNetPrice * (1 + ($checkinStateTaxRate / 100)))
                               : '';
                           @endphp
                           <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
@@ -1976,10 +1983,17 @@
                   <legend class="fieldset-legend">Estimated Price{{ isBoardingService($appointment->service) ? ' (incl. tax)' : '' }}*</legend>
                   <label class="input w-full focus:outline-0 input-sm">
                     @php
-                      $estimatedPriceValue = $appointment->estimated_price ?? $dbEstimatedPrice ?? '';
+                      $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
+                        ? (float) $dbEstimatedPrice
+                        : (float) ($appointment->estimated_price ?? 0);
                       $checkinStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
-                      $estimatedPriceDisplayValue = $estimatedPriceValue !== ''
-                        ? ((float) $estimatedPriceValue * (1 + ($checkinStateTaxRate / 100)))
+                      $checkinBoardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
+                      $checkinDiscountAmount = floatval($checkinBoardingPricing['family_discount_amount'] ?? 0);
+                      $checkinNetPrice = isBoardingService($appointment->service)
+                        ? max(0, $estimatedPriceValue - $checkinDiscountAmount)
+                        : $estimatedPriceValue;
+                      $estimatedPriceDisplayValue = $estimatedPriceValue > 0
+                        ? ($checkinNetPrice * (1 + ($checkinStateTaxRate / 100)))
                         : '';
                     @endphp
                     <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
