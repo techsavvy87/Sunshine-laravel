@@ -89,6 +89,31 @@
       min-height: 2.75rem;
       padding: 0.25rem;
     }
+
+    /* Fix: Select2/FilePond should not lock the page scroll after adding vaccination rows */
+    html,
+    body {
+      overflow-y: auto;
+    }
+
+    .filepond--root {
+      overflow: hidden !important;
+      max-height: 250px;
+    }
+
+    .select2-container {
+      width: 100% !important;
+      touch-action: auto !important;
+    }
+
+    .select2-dropdown {
+      z-index: 99999 !important;
+    }
+
+    .select2-results__options {
+      max-height: 250px !important;
+      overflow-y: auto !important;
+    }
   </style>
 @endsection
 
@@ -1418,6 +1443,15 @@
     const vaccinationRemoveDisabledColor = '#b3b8c3';
     let vaccinationRowCounter = 0;
 
+
+    function unlockPageScroll() {
+      document.documentElement.style.overflow = 'auto';
+      document.documentElement.style.overflowY = 'auto';
+      document.body.style.overflow = 'auto';
+      document.body.style.overflowY = 'auto';
+      document.body.style.position = 'relative';
+    }
+
     function findVaccinationOption(value) {
       const normalizedValue = (value || '').toString().trim().toLowerCase();
       if (!normalizedValue) {
@@ -1455,7 +1489,11 @@
       $('#vaccinations_container .vaccination-type-select')
         .off('change.uniqueVaccination')
         .on('change.uniqueVaccination', function() {
-          refreshVaccinationDropdowns();
+          unlockPageScroll();
+          setTimeout(function() {
+            refreshVaccinationDropdowns();
+            unlockPageScroll();
+          }, 0);
         });
     }
 
@@ -1491,10 +1529,25 @@
     }
 
     function initVaccinationRowSelect2(row) {
-      row.find('.vaccination-type-select').select2({
-        placeholder: 'Select vaccination',
-        allowClear: true,
-        width: '100%'
+      row.find('.vaccination-type-select').each(function() {
+        const $select = $(this);
+
+        if ($select.hasClass('select2-hidden-accessible')) {
+          $select.select2('destroy');
+        }
+
+        $select.select2({
+          placeholder: 'Select vaccination',
+          allowClear: true,
+          width: '100%',
+          dropdownParent: $('#vaccinations_section')
+        });
+
+        $select
+          .off('select2:open.scrollFix select2:close.scrollFix select2:select.scrollFix select2:unselect.scrollFix')
+          .on('select2:open.scrollFix select2:close.scrollFix select2:select.scrollFix select2:unselect.scrollFix', function() {
+            setTimeout(unlockPageScroll, 0);
+          });
       });
     }
 
@@ -2046,6 +2099,20 @@
       } else {
         addVaccinationRow();
       }
+
+      unlockPageScroll();
+
+      $(document)
+        .off('select2:open.pageScrollFix select2:close.pageScrollFix')
+        .on('select2:open.pageScrollFix select2:close.pageScrollFix', function() {
+          setTimeout(unlockPageScroll, 0);
+        });
+
+      $('dialog')
+        .off('close.pageScrollFix')
+        .on('close.pageScrollFix', function() {
+          setTimeout(unlockPageScroll, 0);
+        });
     });
 
     function saveQuestionnaire(ele, category, petId, questionnaireId) {
