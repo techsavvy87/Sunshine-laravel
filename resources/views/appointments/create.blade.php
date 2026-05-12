@@ -863,6 +863,7 @@
         method: 'POST',
         data: {
           pet_id: primaryPetId || null,
+          pet_ids: pet,
           service_id: service,
           additional_services: selectedAdditionalServices,
         },

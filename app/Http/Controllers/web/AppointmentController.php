@@ -677,7 +677,9 @@ class AppointmentController extends Controller
     public function getValidationInfo(Request $request)
     {
         $request->validate([
-            'pet_id' => 'required|exists:pet_profiles,id',
+            'pet_id' => 'required_without:pet_ids|nullable|exists:pet_profiles,id',
+            'pet_ids' => 'required_without:pet_id|nullable|array|min:1',
+            'pet_ids.*' => 'exists:pet_profiles,id',
             'service_id' => 'required|exists:services,id',
             'package_id' => 'nullable|exists:packages,id',
             'additional_services' => 'nullable|array',
@@ -693,7 +695,23 @@ class AppointmentController extends Controller
         $occupied = $occupiedKennelCount + Room::where('status', '!=', 'Available')->where('type', '!=', 'dog')->count();
         $available_status = $occupied / $capacity < 0.5? true : false;
 
-        $pet = PetProfile::find($request->pet_id);
+        $selectedPetIds = collect($request->input('pet_ids', []))
+            ->filter(fn ($id) => !empty($id))
+            ->map(fn ($id) => intval($id))
+            ->unique()
+            ->values();
+
+        if ($selectedPetIds->isEmpty() && $request->filled('pet_id')) {
+            $selectedPetIds = collect([(int) $request->pet_id]);
+        }
+
+        $pets = PetProfile::with(['vaccinations', 'owner'])
+            ->whereIn('id', $selectedPetIds)
+            ->get()
+            ->keyBy('id');
+
+        $primaryPet = $pets->get($selectedPetIds->first());
+
         $service = Service::find($request->service_id);
         $additionalServiceIds = collect($request->input('additional_services', []))
             ->filter(fn ($id) => !empty($id))
@@ -717,22 +735,57 @@ class AppointmentController extends Controller
 
         // Required vaccine validation by pet type
         $vaccineValidator = new \App\Services\PetVaccineValidator();
-        $vaccineValidation = $vaccineValidator->validate($pet);
-        $vaccineStatus = $vaccineValidation['valid']
-            ? 'approved'
-            : ($vaccineValidation['status'] === 'expired' ? 'expired' : false);
-        $vaccineMessage = $vaccineValidation['message'] ?? null;
-        $vaccineMessages = $vaccineValidation['messages'] ?? [];
+        $vaccineStatus = 'approved';
+        $vaccineMessages = [];
+        $hasExpired = false;
+        $hasMissing = false;
 
-        $questionnaire = Questionnaire::where('pet_id', $pet->id)
-            ->where('user_id', $pet->user_id)
+        foreach ($selectedPetIds as $petId) {
+            $pet = $pets->get($petId);
+            if (!$pet) {
+                continue;
+            }
+
+            $vaccineValidation = $vaccineValidator->validate($pet);
+            if ($vaccineValidation['valid']) {
+                continue;
+            }
+
+            if (($vaccineValidation['status'] ?? null) === 'expired') {
+                $hasExpired = true;
+            } else {
+                $hasMissing = true;
+            }
+
+            $petMessages = $vaccineValidation['messages'] ?? [];
+            if (empty($petMessages) && !empty($vaccineValidation['message'])) {
+                $petMessages = [$vaccineValidation['message']];
+            }
+
+            foreach ($petMessages as $message) {
+                $vaccineMessages[] = $pet->name . ': ' . $message;
+            }
+        }
+
+        if ($hasMissing) {
+            $vaccineStatus = false;
+        } elseif ($hasExpired) {
+            $vaccineStatus = 'expired';
+        }
+
+        $vaccineMessage = $vaccineMessages[0] ?? null;
+
+        $questionnaire = Questionnaire::where('pet_id', optional($primaryPet)->id)
+            ->where('user_id', optional($primaryPet)->user_id)
             ->where('service_category_id', $service->category->id)
             ->orderBy('created_at', 'desc')
             ->first();
         $questionnaireStatus = $questionnaire && $questionnaire->status === 'approved' ? true : false;
 
         // Pet Owner profile status
-        $ownerStatus = (bool)$pet->owner->status;
+        $ownerStatus = $pets->every(function ($pet) {
+            return (bool) optional($pet->owner)->status;
+        });
 
         return response()->json([
             'owner_status' => $ownerStatus,
