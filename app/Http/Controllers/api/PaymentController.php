@@ -178,6 +178,14 @@ class PaymentController extends Controller
                 'title' => $appointment->invoice->discount_title ?? '',
                 'amount' => $appointment->invoice->discount_amount
             ];
+        } elseif (isBoardingService($appointment->service)) {
+            $boardingPricing = getBoardingPricingBreakdown($appointment);
+            if (($boardingPricing['family_discount_amount'] ?? 0) > 0) {
+                $result['discount'] = [
+                    'title' => $boardingPricing['family_discount_title'] ?? 'Multi-Pet Discount',
+                    'amount' => floatval($boardingPricing['family_discount_amount']),
+                ];
+            }
         }
 
         return response()->json([

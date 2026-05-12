@@ -814,6 +814,35 @@
       });
     }
 
+    function isWithinBusinessHours(dateTimeValue) {
+      if (!dateTimeValue) {
+        return false;
+      }
+
+      const parts = dateTimeValue.split('T');
+      if (parts.length !== 2) {
+        return false;
+      }
+
+      const timeParts = parts[1].split(':');
+      if (timeParts.length < 2) {
+        return false;
+      }
+
+      const hours = parseInt(timeParts[0], 10);
+      const minutes = parseInt(timeParts[1], 10);
+
+      if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+        return false;
+      }
+
+      const totalMinutes = (hours * 60) + minutes;
+      const businessStart = 9 * 60;
+      const businessEnd = 16 * 60;
+
+      return totalMinutes >= businessStart && totalMinutes <= businessEnd;
+    }
+
     function showAddressValidationErrors(ownerAddressValid, facilityAddressValid) {
       const messages = [];
 
@@ -919,6 +948,18 @@
           alert_modal.showModal();
           return;
         }
+
+        if (!isWithinBusinessHours(boardingStart)) {
+          $('#alert_message').text('Drop-off time must be between 9:00 AM and 4:00 PM.');
+          alert_modal.showModal();
+          return;
+        }
+
+        if (!isWithinBusinessHours(boardingEnd)) {
+          $('#alert_message').text('Pick-up time must be between 9:00 AM and 4:00 PM.');
+          alert_modal.showModal();
+          return;
+        }
       }
 
       $.ajax({
@@ -943,10 +984,13 @@
           if (!response.owner_status) {
             validationMessage += '<li>Pet owner\'s profile is inactive.</li>';
           }
-          if (response.vaccine_status === 'expired') {
-            validationMessage += '<li>Pet vaccination is expired.</li>';
-          } else if (!response.vaccine_status) {
-            validationMessage += '<li>Pet vaccination records is not approved.</li>';
+          if (response.vaccine_status === 'expired' || !response.vaccine_status) {
+            const vaccineMessages = Array.isArray(response.vaccine_messages) && response.vaccine_messages.length
+              ? response.vaccine_messages
+              : [response.vaccine_message || (response.vaccine_status === 'expired' ? 'Pet vaccination is expired.' : 'Pet vaccination records is not approved.')];
+            vaccineMessages.forEach(function(message) {
+              validationMessage += '<li>' + message + '</li>';
+            });
           }
           if (!response.questionnaire_status) {
             validationMessage += '<li>Pet questionnaire is not approved.</li>';

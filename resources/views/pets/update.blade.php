@@ -301,12 +301,11 @@
     </div>
     @php
       $vaccinationTypeOptions = [
-        'Distemper',
-        'Parvo',
         'Leptospirosis',
         'Rabies',
+        'FVRCP',
         'Bordetella',
-        'Da2PP (DHPP, DHLPP)',
+        'DHPP',
         'Annual Exam',
         'Annual Heartworm',
         'C5 Canine Vaccine',

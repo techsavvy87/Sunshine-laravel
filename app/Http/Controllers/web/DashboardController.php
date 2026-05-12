@@ -400,6 +400,21 @@ class DashboardController extends Controller
             })
             ->values();
 
+        $boardingPricing = isBoardingService($appointment->service)
+            ? getBoardingPricingBreakdown($appointment)
+            : null;
+
+        if (($boardingPricing['family_discount_amount'] ?? 0) > 0) {
+            $invoiceDiscountRules = collect([[
+                'id' => 'boarding-family-discount',
+                'title' => $boardingPricing['family_discount_title'] ?? 'Multi-Pet Discount',
+                'type' => 'fixed',
+                'amount' => floatval($boardingPricing['family_discount_amount']),
+                'start_date' => null,
+                'end_date' => null,
+            ]]);
+        }
+
         $petBehaviors = PetBehavior::with('icon')->orderBy('description')->get();
 
         return view('dashboard.appointment', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'invoiceDiscountRules', 'petBehaviors', 'dbEstimatedPrice'));

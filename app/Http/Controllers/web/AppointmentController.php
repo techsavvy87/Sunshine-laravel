@@ -715,14 +715,14 @@ class AppointmentController extends Controller
             });
         }
 
-        // Pet vaccine status check
-        if ($pet->vaccine_status === 'approved') {
-            $vaccineStatus = 'approved';
-        } else if ($pet->vaccine_status === 'expired') {
-            $vaccineStatus = 'expired';
-        } else {
-            $vaccineStatus = false;
-        }
+        // Required vaccine validation by pet type
+        $vaccineValidator = new \App\Services\PetVaccineValidator();
+        $vaccineValidation = $vaccineValidator->validate($pet);
+        $vaccineStatus = $vaccineValidation['valid']
+            ? 'approved'
+            : ($vaccineValidation['status'] === 'expired' ? 'expired' : false);
+        $vaccineMessage = $vaccineValidation['message'] ?? null;
+        $vaccineMessages = $vaccineValidation['messages'] ?? [];
 
         $questionnaire = Questionnaire::where('pet_id', $pet->id)
             ->where('user_id', $pet->user_id)
@@ -737,6 +737,8 @@ class AppointmentController extends Controller
         return response()->json([
             'owner_status' => $ownerStatus,
             'vaccine_status' => $vaccineStatus,
+            'vaccine_message' => $vaccineMessage,
+            'vaccine_messages' => $vaccineMessages,
             'questionnaire_status' => $questionnaireStatus,
             'available_status' => $available_status,
         ]);
@@ -1523,6 +1525,18 @@ class AppointmentController extends Controller
                     'status' => 'fail'
                 ])->withInput();
             }
+
+            $boardingPet = $appointment->pet;
+            if ($boardingPet) {
+                $vaccineValidator = new \App\Services\PetVaccineValidator();
+                $vaccineValidation = $vaccineValidator->validate($boardingPet);
+                if (!$vaccineValidation['valid']) {
+                    return redirect()->back()->with([
+                        'message' => 'Cannot confirm check-in: ' . ($vaccineValidation['message'] ?? 'Pet vaccination is not valid.'),
+                        'status' => 'fail'
+                    ]);
+                }
+            }
         }
 
         $validationRules = [
@@ -2154,6 +2168,17 @@ class AppointmentController extends Controller
             ], 422);
         }
 
+        $boardingPricing = isBoardingService($appointment->service)
+            ? getBoardingPricingBreakdown($appointment)
+            : null;
+        $resolvedDiscountAmount = floatval($request->discount_amount ?? 0);
+        $resolvedDiscountTitle = $request->discount_title ?? '';
+
+        if (($boardingPricing['family_discount_amount'] ?? 0) > 0) {
+            $resolvedDiscountAmount = floatval($boardingPricing['family_discount_amount']);
+            $resolvedDiscountTitle = $boardingPricing['family_discount_title'] ?? 'Multi-Pet Discount';
+        }
+
         $invoice->customer_id = $appointment->customer_id;
         $invoice->invoice_number = $request->invoice_number;
         $invoice->first_name = $request->first_name;
@@ -2162,8 +2187,8 @@ class AppointmentController extends Controller
         $invoice->issued_at = $request->issued_at ? Carbon::parse($request->issued_at) : null;
         $invoice->due_date = $request->due_date ? Carbon::parse($request->due_date) : null;
         if ($request->status !== "draft") {
-            $invoice->discount_amount = $request->discount_amount ?? 0;
-            $invoice->discount_title = $request->discount_title ?? '';
+            $invoice->discount_amount = $resolvedDiscountAmount;
+            $invoice->discount_title = $resolvedDiscountTitle;
         }
 
         if ($request->status === 'paid' && !$request->paid_at) {
@@ -2198,8 +2223,8 @@ class AppointmentController extends Controller
         }
 
         $discountInfo = [
-            'discount_title' => $request->discount_title,
-            'discount_amount' => $request->discount_amount ?? 0
+            'discount_title' => $resolvedDiscountTitle,
+            'discount_amount' => $resolvedDiscountAmount,
         ];
 
         if ($request->status === 'paid' && $request->payment_amount && $request->payment_method) {

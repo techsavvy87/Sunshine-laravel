@@ -231,7 +231,10 @@
       }
 
       $appointmentStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
-      $estimatedPriceWithTax = $estimatedPrice + ($estimatedPrice * ($appointmentStateTaxRate / 100));
+      $boardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
+      $estimatedDiscountAmount = floatval($boardingPricing['family_discount_amount'] ?? 0);
+      $estimatedNetPrice = max(0, $estimatedPrice - $estimatedDiscountAmount);
+      $estimatedPriceWithTax = $estimatedNetPrice + ($estimatedNetPrice * ($appointmentStateTaxRate / 100));
     @endphp
     <div class="flex items-center gap-2">
       <p class="font-medium">Estimated Price: </p>
@@ -1197,7 +1200,7 @@
                         $discountTooltipText = 'The discount "' . $discountTooltipTitle . '" is applied for ' . $discountCustomerName . '.';
                       @endphp
                       <tr id="invoice_discount_row">
-                          <td colspan="2" class="font-medium text-end" width="66%">Discount:</td>
+                          <td id="invoice_discount_label" colspan="2" class="font-medium text-end" width="66%">{{ $invoice->discount_title ?: 'Discount' }}:</td>
                           <td id="invoice_discount_amount" width="10%">-${{ number_format($invoice->discount_amount, 2) }}</td>
                           <td style="padding-left: 0">
                               <span class="flex tooltip tooltip-info tooltip-left cursor-pointer js-click-tooltip js-invoice-discount-tooltip"
@@ -1208,7 +1211,7 @@
                       </tr>
                       @elseif(!empty($invoiceDiscountRules))
                         <tr id="invoice_discount_row" style="display: none;">
-                          <td colspan="2" class="font-medium text-end" width="66%">Discount:</td>
+                          <td id="invoice_discount_label" colspan="2" class="font-medium text-end" width="66%">Discount:</td>
                           <td id="invoice_discount_amount" width="10%"></td>
                           <td style="padding-left: 0">
                               <span class="flex tooltip tooltip-info tooltip-left cursor-pointer js-click-tooltip js-invoice-discount-tooltip"
@@ -3542,14 +3545,8 @@
         },
         dataType: 'json',
         success: function(response) {
-          if (response.vaccine_status === 'expired') {
-            $('#alert_message').text('Pet vaccination is expired.');
-            alert_modal.showModal();
-            return;
-          }
-
-          if (!response.vaccine_status) {
-            $('#alert_message').text('Pet vaccination records is not approved.');
+          if (response.vaccine_status === 'expired' || !response.vaccine_status) {
+            $('#alert_message').text(response.vaccine_message || (response.vaccine_status === 'expired' ? 'Pet vaccination is expired.' : 'Pet vaccination records is not approved.'));
             alert_modal.showModal();
             return;
           }
@@ -5200,6 +5197,7 @@
 
     const discountRow = $('#invoice_discount_row');
     const discountTooltip = $('.js-invoice-discount-tooltip');
+    const discountLabel = $('#invoice_discount_label');
     const appliedDiscountTitle = (discountResult.rule && discountResult.rule.title) ? discountResult.rule.title : null;
     currentDiscountTitle = hasPersistedInvoiceDiscount ? (persistedInvoiceDiscountTitle || null) : appliedDiscountTitle;
 
@@ -5207,11 +5205,13 @@
       if (discountAmount > 0) {
         discountRow.show();
         $('#invoice_discount_amount').text('-$' + discountAmount.toFixed(2));
-        const titleForTooltip = currentDiscountTitle || '';
+        discountLabel.text((currentDiscountTitle || 'Discount') + ':');
+        const titleForTooltip = currentDiscountTitle || 'Discount';
         const tooltipText = 'The discount "' + titleForTooltip + '" is applied for ' + invoiceCustomerFullName + '.';
         discountTooltip.attr('data-tip', tooltipText);
       } else {
         discountRow.hide();
+        discountLabel.text('Discount:');
         discountTooltip.removeClass('tooltip-open');
       }
     }

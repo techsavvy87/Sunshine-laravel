@@ -50,14 +50,11 @@ class AppointmentController extends Controller
             ], 200);
         }
 
-        // Pet vaccine status check
-        if ($pet->vaccine_status === 'approved') {
-            $vaccineStatus = true;
-        } else if ($pet->vaccine_status === 'expired') {
-            $vaccineStatus = 'expired';
-        } else {
-            $vaccineStatus = false;
-        }
+        // Required vaccine validation by pet type
+        $vaccineValidator = new \App\Services\PetVaccineValidator();
+        $vaccineValidation = $vaccineValidator->validate($pet);
+        $vaccineStatus = $vaccineValidation['valid'] ? true : ($vaccineValidation['status'] === 'expired' ? 'expired' : false);
+        $vaccineMessage = $vaccineValidation['message'] ?? null;
         // Pet Questionnaire status check
 
         $questionnaireStatus = true;
@@ -127,13 +124,13 @@ class AppointmentController extends Controller
         if ($vaccineStatus === 'expired') {
             return response()->json([
                 'status' => false,
-                'message' => 'Pet vaccination is expired',
+                'message' => $vaccineMessage ?? 'Pet vaccination is expired.',
             ], 200);
         }
         if (!$vaccineStatus) {
             return response()->json([
                 'status' => false,
-                'message' => 'Pet vaccination records must be approved before booking.',
+                'message' => $vaccineMessage ?? 'Pet vaccination records must be approved before booking.',
             ], 200);
         }
         if (!$questionnaireStatus) {

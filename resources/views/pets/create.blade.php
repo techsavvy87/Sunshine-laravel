@@ -188,12 +188,11 @@
     </div>
     @php
       $vaccinationTypeOptions = [
-          'Distemper',
-          'Parvo',
           'Leptospirosis',
           'Rabies',
+          'FVRCP',
           'Bordetella',
-          'Da2PP (DHPP, DHLPP)',
+          'DHPP',
           'Annual Exam',
           'Annual Heartworm',
           'C5 Canine Vaccine',
@@ -355,8 +354,7 @@
         placeholder: 'Select vaccination',
         allowClear: true,
         width: '100%',
-        dropdownParent: row.closest('.card-body'),
-        minimumResultsForSearch: Infinity
+        dropdownParent: row.closest('.card-body')
       });
     }
 

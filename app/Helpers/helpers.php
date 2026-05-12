@@ -125,6 +125,79 @@ if (!function_exists('isPackageService')) {
     }
 }
 
+if (!function_exists('getBoardingNightCount')) {
+    function getBoardingNightCount($appointment): int
+    {
+        if (empty($appointment?->date) || empty($appointment?->end_date)) {
+            return 0;
+        }
+
+        $checkInDate = \Carbon\Carbon::parse($appointment->date)->startOfDay();
+        $pickupDate = \Carbon\Carbon::parse($appointment->end_date)->startOfDay();
+
+        if ($pickupDate->lte($checkInDate)) {
+            return 0;
+        }
+
+        return $checkInDate->diffInDays($pickupDate);
+    }
+}
+
+if (!function_exists('getBoardingFamilyPetCount')) {
+    function getBoardingFamilyPetCount($appointment, ?int $petCountOverride = null): int
+    {
+        if (!is_null($petCountOverride)) {
+            return max(0, $petCountOverride);
+        }
+
+        $familyPets = collect($appointment->family_pets ?? [])->filter();
+        if ($familyPets->isNotEmpty()) {
+            return $familyPets->count();
+        }
+
+        $metadata = $appointment->metadata ?? [];
+        $familyPetIds = $metadata['family_pet_ids'] ?? ($metadata['family_pets'] ?? ($metadata['pet_ids'] ?? []));
+
+        if (is_string($familyPetIds)) {
+            $familyPetIds = array_filter(array_map('trim', explode(',', $familyPetIds)));
+        }
+
+        if (is_array($familyPetIds) && !empty($familyPetIds)) {
+            return count($familyPetIds);
+        }
+
+        return !empty($appointment?->pet_id) ? 1 : 0;
+    }
+}
+
+if (!function_exists('getBoardingPricingBreakdown')) {
+    function getBoardingPricingBreakdown($appointment, ?int $petCountOverride = null): array
+    {
+        $nightlyRate = 45.0;
+        $nights = getBoardingNightCount($appointment);
+        $petCount = getBoardingFamilyPetCount($appointment, $petCountOverride);
+        $boardingSubtotal = round($petCount * $nightlyRate * $nights, 2);
+
+        $discountPerNight = match ($petCount) {
+            2 => 10.0,
+            3 => 20.0,
+            default => 0.0,
+        };
+
+        $familyDiscount = round($discountPerNight * $nights, 2);
+
+        return [
+            'nightly_rate' => $nightlyRate,
+            'nights' => $nights,
+            'pet_count' => $petCount,
+            'boarding_subtotal' => $boardingSubtotal,
+            'family_discount_title' => $familyDiscount > 0 ? 'Multi-Pet Discount' : null,
+            'family_discount_amount' => $familyDiscount,
+            'total' => round(max(0, $boardingSubtotal - $familyDiscount), 2),
+        ];
+    }
+}
+
 if (!function_exists('getBoardingServicePrice')) {
     function getBoardingServicePrice($service, $appointment)
     {
@@ -132,35 +205,9 @@ if (!function_exists('getBoardingServicePrice')) {
             return null;
         }
 
-        $price = floatval($service->price ?? 0);
-        $duration = floatval($service->duration ?? 1);
+        $pricing = getBoardingPricingBreakdown($appointment, 1);
 
-        if ($price > 0 && $duration > 0) {
-            $pricePerHour = $price / $duration;
-
-            $startDateTime = null;
-            if ($appointment->date && $appointment->start_time) {
-                $startDateTime = \Carbon\Carbon::parse($appointment->date . ' ' . $appointment->start_time);
-            } elseif ($appointment->date) {
-                $startDateTime = \Carbon\Carbon::parse($appointment->date);
-            }
-
-            $endDateTime = null;
-            if ($appointment->end_date && $appointment->end_time) {
-                $endDateTime = \Carbon\Carbon::parse($appointment->end_date . ' ' . $appointment->end_time);
-            } elseif ($appointment->end_date) {
-                $endDateTime = \Carbon\Carbon::parse($appointment->end_date);
-            }
-
-            if ($startDateTime && $endDateTime && $endDateTime->gt($startDateTime)) {
-                $totalHours = $startDateTime->diffInMinutes($endDateTime) / 60;
-                return round($pricePerHour * $totalHours, 2);
-            } elseif ($startDateTime) {
-                return round($pricePerHour * 24, 2);
-            }
-        }
-
-        return 0;
+        return $pricing['boarding_subtotal'];
     }
 }
 
