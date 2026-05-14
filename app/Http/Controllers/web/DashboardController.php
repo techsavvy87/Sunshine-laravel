@@ -402,8 +402,9 @@ class DashboardController extends Controller
             return $extraFee;
         };
 
-        $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
-        $additionalServices = Service::whereIn('id', array_filter($additionalServiceIds))->get();
+        $additionalServicesByPet = $appointment->additional_services_by_pet ?? [];
+        $additionalServiceIds = $appointment->additional_service_ids_flat ?? [];
+        $additionalServices = Service::whereIn('id', array_filter($additionalServiceIds))->get()->keyBy('id');
 
         // Set up the estimated price of the appointment
         $computedEstimatedPrice = 0;
@@ -424,7 +425,18 @@ class DashboardController extends Controller
                     ? $boardingPrice
                     : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
 
-                foreach ($additionalServices as $service) {
+                $petAdditionalServiceIds = collect($additionalServicesByPet[$pet->id ?? 0] ?? [])
+                    ->map(fn ($serviceId) => (int) $serviceId)
+                    ->filter(fn ($serviceId) => $serviceId > 0)
+                    ->unique()
+                    ->values();
+
+                foreach ($petAdditionalServiceIds as $petAdditionalServiceId) {
+                    $service = $additionalServices->get($petAdditionalServiceId);
+                    if (!$service) {
+                        continue;
+                    }
+
                     $petTotal += $resolveAppointmentServicePrice($service, $petSize);
                 }
 
@@ -445,8 +457,8 @@ class DashboardController extends Controller
             $coatPricingServiceIds[] = $appointment->second_service_id;
         }
 
-        if (!empty($appointment->additional_service_ids)) {
-            $coatPricingServiceIds = array_merge($coatPricingServiceIds, explode(',', $appointment->additional_service_ids));
+        if (!empty($additionalServiceIds)) {
+            $coatPricingServiceIds = array_merge($coatPricingServiceIds, $additionalServiceIds);
         }
 
         $computedEstimatedPrice += $calculateCoatTypeExtraFee($coatPricingServiceIds);
@@ -466,8 +478,8 @@ class DashboardController extends Controller
         if (!empty($appointment->second_service_id ?? null)) {
             $coatFeeServiceIds[] = $appointment->second_service_id;
         }
-        if (!empty($appointment->additional_service_ids)) {
-            $coatFeeServiceIds = array_merge($coatFeeServiceIds, explode(',', $appointment->additional_service_ids));
+        if (!empty($additionalServiceIds)) {
+            $coatFeeServiceIds = array_merge($coatFeeServiceIds, $additionalServiceIds);
         }
         $coatExtraFee = $calculateCoatTypeExtraFee($coatFeeServiceIds);
         $appointment->coat_extra_fee = $coatExtraFee > 0 ? $coatExtraFee : null;
@@ -902,9 +914,17 @@ class DashboardController extends Controller
             $checkinServices = is_array($checkinFlows)
                 ? $this->normalizeDashboardServiceIds($checkinFlows['additional_services_link'] ?? [])
                 : collect();
-            $appointmentServices = $this->normalizeDashboardServiceIds($appointment->additional_service_ids ?? []);
 
-            return $checkinServices->merge($appointmentServices);
+            $servicesByPet = collect($appointment->additional_services_by_pet ?? [])
+                ->flatten()
+                ->map(fn ($serviceId) => (int) $serviceId)
+                ->filter(fn ($serviceId) => $serviceId > 0);
+
+            $legacyServices = $this->normalizeDashboardServiceIds($appointment->additional_service_ids ?? []);
+
+            return $checkinServices
+                ->merge($servicesByPet)
+                ->merge($legacyServices);
         })->unique()->values();
 
         if ($serviceIds->isEmpty()) {
@@ -913,44 +933,95 @@ class DashboardController extends Controller
 
         $serviceNames = Service::whereIn('id', $serviceIds)->pluck('name', 'id');
 
-        return $appointments->map(function (Appointment $appointment) use ($checkinsByAppointment, $serviceNames) {
+        return $appointments->flatMap(function (Appointment $appointment) use ($checkinsByAppointment, $serviceNames) {
             $checkin = $checkinsByAppointment->get($appointment->id);
             $checkinFlows = $checkin && $checkin->flows ? json_decode($checkin->flows, true) : [];
             $checkinServices = is_array($checkinFlows)
                 ? $this->normalizeDashboardServiceIds($checkinFlows['additional_services_link'] ?? [])
                 : collect();
-            $appointmentServices = $this->normalizeDashboardServiceIds($appointment->additional_service_ids ?? []);
-            $serviceIds = $checkinServices->merge($appointmentServices)->unique()->values();
-
-            if ($serviceIds->isEmpty()) {
-                return null;
-            }
 
             $familyPets = $appointment->familyPets ?? collect();
             $primaryPet = $appointment->pet ?: $familyPets->first();
-            $petNames = $familyPets->pluck('name')->filter()->values();
+            $familyPetMap = $familyPets->keyBy(fn ($pet) => (int) $pet->id);
 
-            if ($petNames->isEmpty() && $primaryPet && !empty($primaryPet->name)) {
-                $petNames = collect([$primaryPet->name]);
+            if ($primaryPet && !$familyPetMap->has((int) $primaryPet->id)) {
+                $familyPetMap->put((int) $primaryPet->id, $primaryPet);
             }
 
-            $serviceNamesForAppointment = $serviceIds
-                ->map(fn (int $serviceId) => $serviceNames->get($serviceId, 'Additional Service'))
-                ->filter()
-                ->unique()
-                ->values();
+            $additionalServicesByPet = collect($appointment->additional_services_by_pet ?? [])
+                ->mapWithKeys(function ($serviceIdsForPet, $petId) {
+                    $normalizedPetId = (int) $petId;
+                    $normalizedServiceIds = collect(is_array($serviceIdsForPet) ? $serviceIdsForPet : [])
+                        ->map(fn ($serviceId) => (int) $serviceId)
+                        ->filter(fn ($serviceId) => $serviceId > 0)
+                        ->unique()
+                        ->values()
+                        ->all();
 
-            return [
-                'appointment_id' => $appointment->id,
-                'pet_name' => $petNames->isNotEmpty() ? $petNames->join(', ') : 'N/A',
-                'pet_img' => $primaryPet->pet_img ?? null,
-                'service_name' => $serviceNamesForAppointment->join(', ', ' & '),
-                'time' => $this->formatDashboardTime($appointment->start_time),
-                'sort_time' => $appointment->start_time,
-            ];
-        })
-        ->filter(function ($item) {
-            return is_array($item);
+                    return $normalizedPetId > 0 ? [$normalizedPetId => $normalizedServiceIds] : [];
+                })
+                ->filter(fn ($serviceIdsForPet) => !empty($serviceIdsForPet));
+
+            if ($additionalServicesByPet->isEmpty()) {
+                $legacyServiceIds = $checkinServices
+                    ->merge($this->normalizeDashboardServiceIds($appointment->additional_service_ids ?? []))
+                    ->unique()
+                    ->values();
+
+                if ($legacyServiceIds->isNotEmpty()) {
+                    $fallbackPetIds = $familyPetMap->keys();
+                    if ($fallbackPetIds->isEmpty() && $primaryPet) {
+                        $fallbackPetIds = collect([(int) $primaryPet->id]);
+                    }
+
+                    if ($fallbackPetIds->isNotEmpty()) {
+                        $additionalServicesByPet = $fallbackPetIds->mapWithKeys(function ($petId) use ($legacyServiceIds) {
+                            return [(int) $petId => $legacyServiceIds->all()];
+                        });
+                    }
+                }
+            }
+
+            if ($additionalServicesByPet->isEmpty()) {
+                return collect();
+            }
+
+            $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
+            $slotsByPet = is_array($metadata['additional_service_time_slots_by_pet'] ?? null)
+                ? $metadata['additional_service_time_slots_by_pet']
+                : [];
+            $slotsByService = is_array($metadata['additional_service_time_slots'] ?? null)
+                ? $metadata['additional_service_time_slots']
+                : [];
+            $legacySlotStartTime = $metadata['additional_service_time_slot_start_time'] ?? null;
+
+            return $additionalServicesByPet->flatMap(function ($serviceIdsForPet, $petId) use ($appointment, $familyPetMap, $serviceNames, $slotsByPet, $slotsByService, $legacySlotStartTime, $primaryPet) {
+                $petId = (int) $petId;
+                $pet = $familyPetMap->get($petId) ?? $primaryPet;
+                $petName = $pet->name ?? 'N/A';
+                $petImg = $pet->pet_img ?? null;
+
+                return collect($serviceIdsForPet)->map(function ($serviceId) use ($appointment, $petId, $petName, $petImg, $serviceNames, $slotsByPet, $slotsByService, $legacySlotStartTime) {
+                    $serviceId = (int) $serviceId;
+                    $slotDetails = data_get($slotsByPet, $petId . '.' . $serviceId, []);
+
+                    if (!is_array($slotDetails) || empty($slotDetails)) {
+                        $slotDetails = data_get($slotsByService, (string) $serviceId, []);
+                    }
+
+                    $slotStartTime = is_array($slotDetails) ? ($slotDetails['start_time'] ?? null) : null;
+                    $displayTime = $slotStartTime ?: $legacySlotStartTime ?: $appointment->start_time;
+
+                    return [
+                        'appointment_id' => $appointment->id,
+                        'pet_name' => $petName,
+                        'pet_img' => $petImg,
+                        'service_name' => $serviceNames->get($serviceId, 'Additional Service'),
+                        'time' => $this->formatDashboardTime($displayTime),
+                        'sort_time' => $slotStartTime ?: $legacySlotStartTime ?: $appointment->start_time,
+                    ];
+                });
+            });
         })
         ->sortBy(function (array $item) {
             return $item['sort_time'] ?: '23:59:59';
@@ -1840,7 +1911,11 @@ class DashboardController extends Controller
             $checkin->flows = json_decode($checkin->flows, true);
         }
 
-        $pet = $appointment->pet;
+        // Get all family pets, not just the first one
+        $familyPets = $appointment->family_pets->isNotEmpty() 
+            ? $appointment->family_pets 
+            : collect([$appointment->pet])->filter();
+        
         $customer = $appointment->customer;
         $ownerProfile = optional($appointment->customer)->profile;
         $ownerName = trim((string) ($ownerProfile->first_name ?? '') . ' ' . ($ownerProfile->last_name ?? ''));
@@ -1848,49 +1923,9 @@ class DashboardController extends Controller
             $ownerName = optional($customer)->name ?? (optional($customer)->email ?? 'Not set');
         }
 
-        $petAge = null;
-        if (!empty($pet->age)) {
-            $petAge = (int) $pet->age;
-        } elseif (!empty($pet->birthdate)) {
-            try {
-                $petAge = \Carbon\Carbon::parse($pet->birthdate)->age;
-            } catch (\Exception $e) {
-                $petAge = null;
-            }
-        }
-        $isSenior = $petAge !== null ? $petAge >= 8 : false;
-
-        $behaviorIds = collect(is_array($pet->pet_behavior_id ?? null) ? $pet->pet_behavior_id : [])
-            ->filter()
-            ->map(fn ($behaviorId) => (int) $behaviorId)
-            ->unique()
-            ->values();
-        $behaviorLabels = $behaviorIds->isNotEmpty()
-            ? PetBehavior::whereIn('id', $behaviorIds->all())->pluck('description')->filter()->values()->all()
-            : [];
-
-        $checkinFlows = is_array(optional($checkin)->flows) ? $checkin->flows : [];
-        $medsFlows = is_array($checkinFlows['meds'] ?? null) ? $checkinFlows['meds'] : [];
-        $medsListFlows = is_array($checkinFlows['meds_list'] ?? null) ? $checkinFlows['meds_list'] : [];
-
         $isTruthy = function ($value) {
             return $value === true || $value === 1 || $value === '1' || $value === 'true';
         };
-
-        $requestMedsAm = filter_var($request->query('meds_am', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-        $requestMedsPm = filter_var($request->query('meds_pm', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-        $hasRequestMedicationState = $requestMedsAm !== null || $requestMedsPm !== null;
-
-        if ($hasRequestMedicationState) {
-            $medicationRequired = ($requestMedsAm === true) || ($requestMedsPm === true);
-        } else {
-            $medicationRequired =
-                !empty($medsListFlows) ||
-                $isTruthy($medsFlows['dispense_am'] ?? null) ||
-                $isTruthy($medsFlows['dispense_pm'] ?? null) ||
-                $isTruthy($checkinFlows['medications_am'] ?? null) ||
-                $isTruthy($checkinFlows['medications_pm'] ?? null);
-        }
 
         $stayDuration = 'Not set';
         $startDate = null;
@@ -1923,31 +1958,28 @@ class DashboardController extends Controller
         }
         $kennelName = optional($kennel)->name ?? 'Not assigned';
 
-        // Extract feeding information
-        $dryFoodList = is_array($checkinFlows['dry_food_list'] ?? null) ? $checkinFlows['dry_food_list'] : [];
-        $wetFoodList = is_array($checkinFlows['wet_food_list'] ?? null) ? $checkinFlows['wet_food_list'] : [];
-        $ownerFood = $checkinFlows['owner_food'] ?? null;
-        $ownerFoodList = is_array($checkinFlows['owner_food_list'] ?? null) ? $checkinFlows['owner_food_list'] : [];
-        $feedingNotes = $checkinFlows['feeding_notes'] ?? null;
+        // Format check-in and pickup times
+        $checkinDateTime = 'Not set';
+        $pickupDateTime = 'Not set';
+        try {
+            if ($checkin && $checkin->created_at) {
+                $checkinDateTime = \Carbon\Carbon::parse($checkin->created_at)->format('M j, Y \a\t h:i A');
+            }
+        } catch (\Exception $e) {
+            $checkinDateTime = 'Not set';
+        }
         
-        // Fallback to legacy single food structure if lists are empty
-        if (empty($dryFoodList) && isset($checkinFlows['dry_food'])) {
-            $dryFoodList = [$checkinFlows['dry_food']];
-        }
-        if (empty($wetFoodList) && isset($checkinFlows['wet_food'])) {
-            $wetFoodList = [$checkinFlows['wet_food']];
+        try {
+            if (!empty($appointment->end_date)) {
+                $pickupDateTime = \Carbon\Carbon::parse($appointment->end_date)->format('M j, Y');
+            }
+        } catch (\Exception $e) {
+            $pickupDateTime = 'Not set';
         }
 
-        // Extract medication information
-        $medicationList = is_array($checkinFlows['meds_list'] ?? null) ? $checkinFlows['meds_list'] : [];
-        if (empty($medicationList) && isset($checkinFlows['meds'])) {
-            $medicationList = [$checkinFlows['meds']];
-        }
-        $medicationNotes = $checkinFlows['medication_notes'] ?? null;
-
-        // Extract rest information
-        $restRequired = $isTruthy($checkinFlows['rest_required'] ?? null);
-        $restNote = $checkinFlows['rest_note'] ?? null;
+        // Process care information for each pet
+        $petsCareData = [];
+        $checkinFlows = is_array(optional($checkin)->flows) ? $checkin->flows : [];
 
         $resolveSelectedTimes = function (array $item) use ($isTruthy) {
             $labels = [];
@@ -1974,96 +2006,159 @@ class DashboardController extends Controller
             return array_values(array_unique($labels));
         };
 
-        $dryFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
-            $item = is_array($item) ? $item : [];
-            $item['selected_times'] = $resolveSelectedTimes($item);
-            return $item;
-        }, $dryFoodList);
+        foreach ($familyPets as $pet) {
+            $petAge = null;
+            if (!empty($pet->age)) {
+                $petAge = (int) $pet->age;
+            } elseif (!empty($pet->birthdate)) {
+                try {
+                    $petAge = \Carbon\Carbon::parse($pet->birthdate)->age;
+                } catch (\Exception $e) {
+                    $petAge = null;
+                }
+            }
+            $isSenior = $petAge !== null ? $petAge >= 8 : false;
 
-        $wetFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
-            $item = is_array($item) ? $item : [];
-            $item['selected_times'] = $resolveSelectedTimes($item);
-            return $item;
-        }, $wetFoodList);
+            $behaviorIds = collect(is_array($pet->pet_behavior_id ?? null) ? $pet->pet_behavior_id : [])
+                ->filter()
+                ->map(fn ($behaviorId) => (int) $behaviorId)
+                ->unique()
+                ->values();
+            $behaviorLabels = $behaviorIds->isNotEmpty()
+                ? PetBehavior::whereIn('id', $behaviorIds->all())->pluck('description')->filter()->values()->all()
+                : [];
 
-        if (!empty($ownerFoodList)) {
-            $ownerFoodList = array_values(array_map(function ($item) use ($resolveSelectedTimes) {
-                $item = is_array($item) ? $item : ['value' => (string) $item];
+            // Get per-pet care data or use shared data
+            $petFlows = $checkinFlows;
+            
+            // Check if there's per-pet data in checkin flows
+            if (isset($checkinFlows['pets_care'][$pet->id])) {
+                $petFlows = $checkinFlows['pets_care'][$pet->id];
+            }
+
+            $medsFlows = is_array($petFlows['meds'] ?? null) ? $petFlows['meds'] : [];
+            $medsListFlows = is_array($petFlows['meds_list'] ?? null) ? $petFlows['meds_list'] : [];
+
+            $requestMedsAm = filter_var($request->query('meds_am', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $requestMedsPm = filter_var($request->query('meds_pm', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $hasRequestMedicationState = $requestMedsAm !== null || $requestMedsPm !== null;
+
+            if ($hasRequestMedicationState) {
+                $medicationRequired = ($requestMedsAm === true) || ($requestMedsPm === true);
+            } else {
+                $medicationRequired =
+                    !empty($medsListFlows) ||
+                    $isTruthy($medsFlows['dispense_am'] ?? null) ||
+                    $isTruthy($medsFlows['dispense_pm'] ?? null) ||
+                    $isTruthy($petFlows['medications_am'] ?? null) ||
+                    $isTruthy($petFlows['medications_pm'] ?? null);
+            }
+
+            // Extract feeding information
+            $dryFoodList = is_array($petFlows['dry_food_list'] ?? null) ? $petFlows['dry_food_list'] : [];
+            $wetFoodList = is_array($petFlows['wet_food_list'] ?? null) ? $petFlows['wet_food_list'] : [];
+            $ownerFood = $petFlows['owner_food'] ?? null;
+            $ownerFoodList = is_array($petFlows['owner_food_list'] ?? null) ? $petFlows['owner_food_list'] : [];
+            $feedingNotes = $petFlows['feeding_notes'] ?? null;
+            
+            // Fallback to legacy single food structure if lists are empty
+            if (empty($dryFoodList) && isset($petFlows['dry_food'])) {
+                $dryFoodList = [$petFlows['dry_food']];
+            }
+            if (empty($wetFoodList) && isset($petFlows['wet_food'])) {
+                $wetFoodList = [$petFlows['wet_food']];
+            }
+
+            // Extract medication information
+            $medicationList = is_array($petFlows['meds_list'] ?? null) ? $petFlows['meds_list'] : [];
+            if (empty($medicationList) && isset($petFlows['meds'])) {
+                $medicationList = [$petFlows['meds']];
+            }
+            $medicationNotes = $petFlows['medication_notes'] ?? null;
+
+            // Extract rest information
+            $restRequired = $isTruthy($petFlows['rest_required'] ?? null);
+            $restNote = $petFlows['rest_note'] ?? null;
+
+            $dryFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
+                $item = is_array($item) ? $item : [];
                 $item['selected_times'] = $resolveSelectedTimes($item);
                 return $item;
-            }, $ownerFoodList));
-        } elseif (is_array($ownerFood)) {
-            $ownerFoodList = [[
-                'value' => trim((string) ($ownerFood['value'] ?? $ownerFood['details'] ?? $ownerFood['note'] ?? '')),
-                'selected_times' => $resolveSelectedTimes($ownerFood),
-            ]];
-        } elseif (is_string($ownerFood) && trim($ownerFood) !== '') {
-            $ownerFoodList = [[
-                'value' => trim($ownerFood),
-                'selected_times' => [],
-            ]];
-        }
+            }, $dryFoodList);
 
-        $medicationList = array_map(function ($item) use ($resolveSelectedTimes) {
-            $item = is_array($item) ? $item : [];
-            $item['selected_times'] = $resolveSelectedTimes($item);
+            $wetFoodList = array_map(function ($item) use ($resolveSelectedTimes) {
+                $item = is_array($item) ? $item : [];
+                $item['selected_times'] = $resolveSelectedTimes($item);
+                return $item;
+            }, $wetFoodList);
 
-            $conditions = [];
-            $mealCondition = trim((string) ($item['meal_condition'] ?? $item['condition'] ?? ''));
-            if ($mealCondition === 'after_meal') {
-                $conditions[] = 'After Meals';
-            } elseif ($mealCondition === 'before_meal') {
-                $conditions[] = 'Before Meals';
-            } elseif ($mealCondition === 'empty_stomach') {
-                $conditions[] = 'Empty Stomach';
+            if (!empty($ownerFoodList)) {
+                $ownerFoodList = array_values(array_map(function ($item) use ($resolveSelectedTimes) {
+                    $item = is_array($item) ? $item : ['value' => (string) $item];
+                    $item['selected_times'] = $resolveSelectedTimes($item);
+                    return $item;
+                }, $ownerFoodList));
+            } elseif (is_array($ownerFood)) {
+                $ownerFoodList = [[
+                    'value' => trim((string) ($ownerFood['value'] ?? $ownerFood['details'] ?? $ownerFood['note'] ?? '')),
+                    'selected_times' => $resolveSelectedTimes($ownerFood),
+                ]];
+            } elseif (is_string($ownerFood) && trim($ownerFood) !== '') {
+                $ownerFoodList = [[
+                    'value' => trim($ownerFood),
+                    'selected_times' => [],
+                ]];
             }
 
-            $item['conditions_display'] = $conditions;
-            return $item;
-        }, $medicationList);
+            $medicationList = array_map(function ($item) use ($resolveSelectedTimes) {
+                $item = is_array($item) ? $item : [];
+                $item['selected_times'] = $resolveSelectedTimes($item);
 
-        // Format check-in and pickup times
-        $checkinDateTime = 'Not set';
-        $pickupDateTime = 'Not set';
-        try {
-            if ($checkin && $checkin->created_at) {
-                $checkinDateTime = \Carbon\Carbon::parse($checkin->created_at)->format('M j, Y \a\t h:i A');
-            }
-        } catch (\Exception $e) {
-            $checkinDateTime = 'Not set';
-        }
-        
-        try {
-            if (!empty($appointment->end_date)) {
-                $pickupDateTime = \Carbon\Carbon::parse($appointment->end_date)->format('M j, Y');
-            }
-        } catch (\Exception $e) {
-            $pickupDateTime = 'Not set';
+                $conditions = [];
+                $mealCondition = trim((string) ($item['meal_condition'] ?? $item['condition'] ?? ''));
+                if ($mealCondition === 'after_meal') {
+                    $conditions[] = 'After Meals';
+                } elseif ($mealCondition === 'before_meal') {
+                    $conditions[] = 'Before Meals';
+                } elseif ($mealCondition === 'empty_stomach') {
+                    $conditions[] = 'Empty Stomach';
+                }
+
+                $item['conditions_display'] = $conditions;
+                return $item;
+            }, $medicationList);
+
+            $petsCareData[] = [
+                'pet' => $pet,
+                'isSenior' => $isSenior,
+                'behaviorLabels' => $behaviorLabels,
+                'medicationRequired' => $medicationRequired,
+                'dryFoodList' => $dryFoodList,
+                'wetFoodList' => $wetFoodList,
+                'ownerFood' => $ownerFood,
+                'ownerFoodList' => $ownerFoodList,
+                'feedingNotes' => $feedingNotes,
+                'medicationList' => $medicationList,
+                'medicationNotes' => $medicationNotes,
+                'restRequired' => $restRequired,
+                'restNote' => $restNote,
+            ];
         }
 
         $pdf = Pdf::loadView('archives.boarding-detail-report-pdf', [
             'appointment' => $appointment,
+            'familyPets' => $familyPets,
+            'petsCareData' => $petsCareData,
             'showPetStayInfo' => true,
             'ownerName' => $ownerName,
             'stayDuration' => $stayDuration,
-            'isSenior' => $isSenior,
-            'medicationRequired' => $medicationRequired,
-            'behaviorLabels' => $behaviorLabels,
             'kennelName' => $kennelName,
             'checkinDateTime' => $checkinDateTime,
             'pickupDateTime' => $pickupDateTime,
-            'dryFoodList' => $dryFoodList,
-            'wetFoodList' => $wetFoodList,
-            'ownerFood' => $ownerFood,
-            'ownerFoodList' => $ownerFoodList,
-            'feedingNotes' => $feedingNotes,
-            'medicationList' => $medicationList,
-            'medicationNotes' => $medicationNotes,
-            'restRequired' => $restRequired,
-            'restNote' => $restNote,
         ]);
 
-        $fileName = 'Boarding_Report_' . $appointment->pet->name . '_' . date('Y-m-d', strtotime($appointment->date)) . '.pdf';
+        $petNames = $familyPets->pluck('name')->join(' & ');
+        $fileName = 'Boarding_Report_' . $petNames . '_' . date('Y-m-d', strtotime($appointment->date)) . '.pdf';
 
         return $pdf->download($fileName);
     }

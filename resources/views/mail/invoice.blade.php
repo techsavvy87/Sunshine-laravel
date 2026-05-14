@@ -129,6 +129,18 @@
       </div>
 
       <h4>Items & Pricing</h4>
+
+      @if(isset($invoiceData['additional_services_grouped_by_pet']) && is_array($invoiceData['additional_services_grouped_by_pet']) && count($invoiceData['additional_services_grouped_by_pet']) > 0)
+      <div style="margin-bottom: 12px;">
+        <strong>Additional Services by Pet</strong>
+        <ul style="margin: 6px 0 0 18px; padding: 0;">
+          @foreach($invoiceData['additional_services_grouped_by_pet'] as $petGroup)
+            <li>{{ $petGroup['pet_name'] ?? 'Pet' }}: {{ isset($petGroup['services']) && is_array($petGroup['services']) ? implode(', ', $petGroup['services']) : '' }}</li>
+          @endforeach
+        </ul>
+      </div>
+      @endif
+
       <table>
         <thead>
           <tr>

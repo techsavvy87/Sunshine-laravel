@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Boarding Report - {{ $appointment->pet->name }}</title>
+  <title>Boarding Report - {{ $familyPets->pluck('name')->join(', ') }}</title>
   <style>
     * {
       margin: 0;
@@ -12,109 +12,146 @@
     }
     body {
       font-family: 'DejaVu Sans', Arial, sans-serif;
-      font-size: 12px;
-      line-height: 1.6;
+      font-size: 14px;
+      line-height: 1.3;
       color: #333;
-      padding: 20px;
+      padding: 8px;
     }
     h1 {
       font-size: 20px;
-      margin-bottom: 15px;
+      margin: 0 0 8px 0;
       color: #1a1a1a;
       border-bottom: 2px solid #4a5568;
-      padding-bottom: 8px;
+      padding-bottom: 4px;
     }
     h2 {
       font-size: 14px;
-      margin-top: 15px;
-      margin-bottom: 8px;
+      margin: 6px 0 3px 0;
       color: #2d3748;
       font-weight: bold;
     }
     h3 {
-      font-size: 12px;
-      margin-top: 10px;
-      margin-bottom: 6px;
+      font-size: 14px;
+      margin: 3px 0 2px 0;
       color: #4a5568;
       font-weight: bold;
     }
     .section {
-      margin-bottom: 15px;
-      padding: 10px;
+      margin-bottom: 6px;
+      padding: 4px;
       page-break-inside: avoid;
     }
     .field {
-      margin-bottom: 5px;
+      margin-bottom: 2px;
     }
     .field-label {
       font-weight: bold;
       color: #4a5568;
       display: inline-block;
-      min-width: 120px;
+      min-width: 100px;
       vertical-align: middle;
-      line-height: 1.3;
+      line-height: 1.2;
     }
     .field-value {
       color: #1a1a1a;
       display: inline-block;
       vertical-align: middle;
-      line-height: 1.3;
+      line-height: 1.2;
+      flex-wrap: wrap;
     }
     .grid {
       display: table;
       width: 100%;
-      margin-bottom: 10px;
+      margin-bottom: 4px;
     }
     .grid-row {
       display: table-row;
     }
     .grid-cell {
       display: table-cell;
-      padding: 3px 10px 3px 0;
+      padding: 1px 6px 1px 0;
       vertical-align: top;
     }
     .subsection {
-      margin-left: 10px;
-      margin-bottom: 10px;
-      padding-left: 10px;
+      margin-left: 6px;
+      margin-bottom: 4px;
+      padding-left: 6px;
       border-left: 2px solid #cbd5e0;
     }
     .item-list {
-      margin-bottom: 8px;
+      margin-bottom: 3px;
     }
     .item {
-      margin-bottom: 6px;
-      padding-left: 15px;
+      margin-bottom: 2px;
+      padding-left: 8px;
     }
     .empty-message {
       color: #718096;
       font-style: italic;
     }
     .footer {
-      margin-top: 30px;
-      padding-top: 15px;
+      margin-top: 8px;
+      padding-top: 6px;
       border-top: 2px solid #4a5568;
       text-align: center;
-      font-size: 10px;
+      font-size: 9px;
       color: #718096;
     }
+    .pets-container {
+      display: table;
+      width: 100%;
+      border-collapse: collapse;
+      gap: 0;
+    }
+    .pet-column {
+      display: table-cell;
+      border: 1px solid #999;
+      padding: 6px;
+      vertical-align: top;
+      width: 50%;
+    }
+    .pet-column-3 {
+      display: table-cell;
+      border: 1px solid #999;
+      padding: 6px;
+      vertical-align: top;
+      width: 33.33%;
+    }
+    .pet-status {
+      margin-bottom: 3px;
+    }
+    .status-badge {
+      background: #eef2f7;
+      padding: 1px 3px;
+      margin-right: 2px;
+      display: inline-block;
+    }
+    .pet-meta,
+    .pet-entry,
+    .pet-note {
+      margin-bottom: 1px;
+    }
     @media print {
+      body {
+        padding: 6px;
+      }
       .section {
         page-break-inside: avoid;
+        margin-bottom: 4px;
       }
     }
     @page {
-      margin: 20px;
+      margin: 10px;
     }
   </style>
 </head>
 <body>
   <h1>Boarding Report</h1>
 
-  {{-- Section 1: Pet Stay Information --}}
+  {{-- Section 1: Appointment Information --}}
   @if(!empty($showPetStayInfo))
   <div class="section">
-    <h2>Pet & Appointment Information</h2>
+    <h2>Appointment Information</h2>
     <div class="grid">
       <div class="grid-row">
         <div class="grid-cell">
@@ -124,8 +161,8 @@
       </div>
       <div class="grid-row">
         <div class="grid-cell">
-          <span class="field-label">Pet Name:</span>
-          <span class="field-value">{{ $appointment->pet->name ?? 'N/A' }}</span>
+          <span class="field-label">Pets:</span>
+          <span class="field-value">{{ $familyPets->pluck('name')->join(', ') ?? 'N/A' }}</span>
         </div>
       </div>
       <div class="grid-row">
@@ -152,161 +189,114 @@
           <span class="field-value">{{ $pickupDateTime ?? 'N/A' }}</span>
         </div>
       </div>
-      <div class="grid-row">
-        <div class="grid-cell">
-          <span class="field-label">Senior:</span>
-          <span class="field-value">{{ !empty($isSenior) ? 'Yes' : 'No' }}</span>
-        </div>
-      </div>
-      <div class="grid-row">
-        <div class="grid-cell">
-          <span class="field-label">Medication Required:</span>
-          <span class="field-value">{{ !empty($medicationRequired) ? 'Yes' : 'No' }}</span>
-        </div>
-      </div>
-      @if(!empty($behaviorLabels))
-        <div class="grid-row">
-          <div class="grid-cell">
-            <span class="field-label">Behavior Notes:</span>
-            <span class="field-value">{{ implode(', ', $behaviorLabels) }}</span>
-          </div>
-        </div>
-      @endif
     </div>
   </div>
   @endif
 
-  {{-- Section 2: Feeding Information --}}
-  <div class="section">
-    <h2>Feeding Information</h2>
-    @if(!empty($dryFoodList) || !empty($wetFoodList) || !empty($ownerFoodList) || !empty($ownerFood))
-      {{-- Dry Food --}}
-      @if(!empty($dryFoodList))
-        <h3>Dry Food</h3>
-        <div class="item-list">
-          @foreach($dryFoodList as $food)
-            <div class="item">
-              <strong>{{ $food['brand'] ?? 'N/A' }}</strong>
-              @if(!empty($food['amount']))
-                — {{ $food['amount'] }}
+  {{-- Section 2-N: Per-Pet Care Information (Side by Side) --}}
+  @if(!empty($petsCareData))
+    <div class="section">
+      <h2>Pet Care Information</h2>
+      <div class="pets-container">
+        @foreach($petsCareData as $petData)
+          <div class="pet-column" style="@if(count($petsCareData) == 3) width: 33.33%; @else width: {{ 100 / count($petsCareData) }}%; @endif">
+            {{-- Pet Name and Status --}}
+            <h3 style="margin: 0 0 3px 0;">{{ $petData['pet']->name }}</h3>
+            <div class="pet-status">
+              @if(!empty($petData['isSenior']))
+                <span class="status-badge">Senior</span>
               @endif
-              <br/>
-              <span class="field-label">Feeding Time:</span>
-              <span class="field-value">{{ !empty($food['selected_times']) ? implode(', ', $food['selected_times']) : 'N/A' }}</span>
-            </div>
-          @endforeach
-        </div>
-      @endif
-
-      {{-- Wet Food --}}
-      @if(!empty($wetFoodList))
-        <h3>Wet Food</h3>
-        <div class="item-list">
-          @foreach($wetFoodList as $food)
-            <div class="item">
-              <strong>{{ $food['brand'] ?? 'N/A' }}</strong>
-              @if(!empty($food['amount']))
-                — {{ $food['amount'] }}
+              @if(!empty($petData['medicationRequired']))
+                <span class="status-badge">Meds</span>
               @endif
-              <br/>
-              <span class="field-label">Feeding Time:</span>
-              <span class="field-value">{{ !empty($food['selected_times']) ? implode(', ', $food['selected_times']) : 'N/A' }}</span>
             </div>
-          @endforeach
-        </div>
-      @endif
 
-      {{-- Owner Food --}}
-      @if(!empty($ownerFoodList))
-        <h3>Owner-Provided Food</h3>
-        <div class="item-list">
-          @foreach($ownerFoodList as $ownerFoodItem)
-            <div class="item">
-              <strong>{{ $ownerFoodItem['value'] ?? 'N/A' }}</strong>
-              <br/>
-              <span class="field-label">Feeding Time:</span>
-              <span class="field-value">{{ !empty($ownerFoodItem['selected_times']) ? implode(', ', $ownerFoodItem['selected_times']) : 'N/A' }}</span>
-            </div>
-          @endforeach
-        </div>
-      @elseif(!empty($ownerFood))
-        <h3>Owner-Provided Food</h3>
-        <div class="item">{{ is_string($ownerFood) ? $ownerFood : 'N/A' }}</div>
-      @endif
-
-      {{-- Feeding Notes --}}
-      @if(!empty($feedingNotes))
-        <h3>Feeding Notes</h3>
-        <div class="item">
-          {{ $feedingNotes }}
-        </div>
-      @endif
-    @else
-      <span class="empty-message">No feeding information recorded.</span>
-    @endif
-  </div>
-
-  {{-- Section 3: Medication Information --}}
-  <div class="section">
-    <h2>Medication Information</h2>
-    @if(!empty($medicationList))
-      <div class="item-list">
-        @foreach($medicationList as $med)
-          <div class="item">
-            <strong>{{ $med['name'] ?? 'N/A' }}</strong>
-            @if(!empty($med['amount']))
-              — {{ $med['amount'] }}
+            @if(!empty($petData['behaviorLabels']))
+              <div class="pet-meta">
+                <strong>Behavior:</strong> {{ implode(', ', $petData['behaviorLabels']) }}
+              </div>
             @endif
-            
-            <br/>
-            <span class="field-label">Medication Time:</span>
-            <span class="field-value">{{ !empty($med['selected_times']) ? implode(', ', $med['selected_times']) : 'N/A' }}</span>
 
-            @if(!empty($med['conditions_display']))
-              <br/>
-              <span class="field-label">Condition:</span>
-              <span class="field-value">{{ implode(', ', $med['conditions_display']) }}</span>
+            {{-- Feeding --}}
+            @if(!empty($petData['dryFoodList']) || !empty($petData['wetFoodList']) || !empty($petData['ownerFoodList']) || !empty($petData['ownerFood']))
+              <h3 style="margin: 3px 0 2px 0;">Feeding</h3>
+              @if(!empty($petData['dryFoodList']))
+                @foreach($petData['dryFoodList'] as $food)
+                  <div class="pet-entry">
+                    <strong>{{ $food['brand'] ?? 'N/A' }}</strong>
+                    @if(!empty($food['amount'])){{ $food['amount'] }} @endif
+                    <br/>
+                    {{ !empty($food['selected_times']) ? implode(', ', $food['selected_times']) : 'N/A' }}
+                  </div>
+                @endforeach
+              @endif
+              @if(!empty($petData['wetFoodList']))
+                @foreach($petData['wetFoodList'] as $food)
+                  <div class="pet-entry">
+                    <strong>{{ $food['brand'] ?? 'N/A' }}</strong>
+                    @if(!empty($food['amount'])){{ $food['amount'] }} @endif
+                    <br/>
+                    {{ !empty($food['selected_times']) ? implode(', ', $food['selected_times']) : 'N/A' }}
+                  </div>
+                @endforeach
+              @endif
+              @if(!empty($petData['ownerFoodList']))
+                @foreach($petData['ownerFoodList'] as $ownerFoodItem)
+                  <div class="pet-entry">
+                    <strong>{{ $ownerFoodItem['value'] ?? 'N/A' }}</strong>
+                    <br/>
+                    {{ !empty($ownerFoodItem['selected_times']) ? implode(', ', $ownerFoodItem['selected_times']) : 'N/A' }}
+                  </div>
+                @endforeach
+              @elseif(!empty($petData['ownerFood']))
+                <div class="pet-entry">{{ is_string($petData['ownerFood']) ? $petData['ownerFood'] : 'N/A' }}</div>
+              @endif
+              @if(!empty($petData['feedingNotes']))
+                <div class="pet-note empty-message">
+                  {{ $petData['feedingNotes'] }}
+                </div>
+              @endif
+            @endif
+
+            {{-- Medication --}}
+            @if(!empty($petData['medicationList']))
+              <h3 style="margin: 3px 0 2px 0;">Medication</h3>
+              @foreach($petData['medicationList'] as $med)
+                <div class="pet-entry">
+                  <strong>{{ $med['name'] ?? 'N/A' }}</strong>
+                  @if(!empty($med['amount'])){{ $med['amount'] }} @endif
+                  <br/>
+                  {{ !empty($med['selected_times']) ? implode(', ', $med['selected_times']) : 'N/A' }}
+                  @if(!empty($med['conditions_display']))
+                    <br/>
+                    <span>{{ implode(', ', $med['conditions_display']) }}</span>
+                  @endif
+                </div>
+              @endforeach
+              @if(!empty($petData['medicationNotes']))
+                <div class="pet-note empty-message">
+                  {{ $petData['medicationNotes'] }}
+                </div>
+              @endif
+            @endif
+
+            {{-- Rest --}}
+            @if(!empty($petData['restRequired']) || !empty($petData['restNote']))
+              <h3 style="margin: 3px 0 2px 0;">Rest</h3>
+              <div class="pet-entry">
+                <strong>Required:</strong> {{ !empty($petData['restRequired']) ? 'Yes' : 'No' }}
+              </div>
+              @if(!empty($petData['restNote']))
+                <div class="pet-note empty-message">
+                  {{ $petData['restNote'] }}
+                </div>
+              @endif
             @endif
           </div>
         @endforeach
       </div>
-
-      {{-- Medication Notes --}}
-      @if(!empty($medicationNotes))
-        <h3>Medication Notes</h3>
-        <div class="item">
-          {{ $medicationNotes }}
-        </div>
-      @endif
-    @else
-      <span class="empty-message">No medications recorded.</span>
-    @endif
-  </div>
-
-  {{-- Section 4: Rest Information --}}
-  <div class="section">
-    <h2>Rest Information</h2>
-    @if(!empty($restRequired) || !empty($restNote))
-      <div class="grid">
-        <div class="grid-row">
-          <div class="grid-cell">
-            <span class="field-label">Rest Required:</span>
-            <span class="field-value">{{ !empty($restRequired) ? 'Yes' : 'No' }}</span>
-          </div>
-        </div>
-        @if(!empty($restNote))
-          <div class="grid-row">
-            <div class="grid-cell">
-              <span class="field-label">Rest Note:</span>
-              <span class="field-value">{{ $restNote }}</span>
-            </div>
-          </div>
-        @endif
-      </div>
-    @else
-      <span class="empty-message">No rest assigned for this pet.</span>
-    @endif
-  </div>
+    </div>
+  @endif
 
   <div class="footer">
     <p>Generated on {{ \Carbon\Carbon::now()->format('F j, Y \a\t h:i A') }}</p>

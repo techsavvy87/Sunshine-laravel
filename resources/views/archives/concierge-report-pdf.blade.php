@@ -12,61 +12,59 @@
     }
     body {
       font-family: 'DejaVu Sans', Arial, sans-serif;
-      font-size: 11px;
-      line-height: 1.5;
+      font-size: 10px;
+      line-height: 1.2;
       color: #333;
-      padding: 20px;
+      padding: 6px;
     }
     h1 {
-      font-size: 20px;
-      margin-bottom: 15px;
+      font-size: 16px;
+      margin: 0 0 6px 0;
       color: #1a1a1a;
       border-bottom: 2px solid #4a5568;
-      padding-bottom: 8px;
+      padding-bottom: 3px;
     }
     h2 {
-      font-size: 14px;
-      margin-top: 15px;
-      margin-bottom: 8px;
+      font-size: 11px;
+      margin: 4px 0 2px 0;
       color: #2d3748;
       font-weight: bold;
     }
     h3 {
-      font-size: 12px;
-      margin-top: 10px;
-      margin-bottom: 5px;
+      font-size: 10px;
+      margin: 2px 0 1px 0;
       color: #4a5568;
       font-weight: bold;
     }
     .section {
-      margin-bottom: 15px;
-      padding: 10px;
+      margin-bottom: 6px;
+      padding: 4px;
       border-bottom: 1px solid #e2e8f0;
       page-break-inside: avoid;
     }
     .field {
-      margin-bottom: 5px;
+      margin-bottom: 1px;
     }
     .field-label {
       font-weight: bold;
       display: inline-block;
-      min-width: 120px;
+      min-width: 100px;
     }
     .field-value {
       display: inline-block;
     }
     .checkbox {
-      margin-right: 5px;
+      margin-right: 3px;
     }
     ul {
-      margin-left: 20px;
-      margin-bottom: 5px;
+      margin-left: 12px;
+      margin-bottom: 2px;
     }
     li {
-      margin-bottom: 3px;
+      margin-bottom: 1px;
     }
     .indent {
-      margin-left: 20px;
+      margin-left: 12px;
     }
     .inline-label {
       display: inline;
@@ -74,19 +72,32 @@
     }
     .inline-value {
       display: inline;
-      margin-left: 5px;
+      margin-left: 3px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-bottom: 10px;
+      margin-bottom: 4px;
+      font-size: 9px;
     }
     table td {
-      padding: 5px;
+      padding: 2px;
       border: 1px solid #e2e8f0;
     }
     .page-break {
       page-break-before: always;
+    }
+    @media print {
+      body {
+        padding: 4px;
+      }
+      .section {
+        page-break-inside: avoid;
+        margin-bottom: 4px;
+      }
+    }
+    @page {
+      margin: 8px;
     }
   </style>
 </head>

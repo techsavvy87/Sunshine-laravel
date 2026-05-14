@@ -118,12 +118,16 @@ class AppointmentController extends Controller
     public function add(Request $request)
     {
         $serviceId = $request->get('service_id');
-        // Get all additional services except the main service if selected
+        $additionalServicesQuery = Service::where('status', 'active')
+            ->whereHas('category', function($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%groom%']);
+            });
+
         if (isset($serviceId)) {
-            $additionalServices = Service::where('id', '!=', $serviceId)->where('status', 'active')->get();
-        } else {
-            $additionalServices = Service::where('status', 'active')->get();
+            $additionalServicesQuery->where('id', '!=', $serviceId);
         }
+
+        $additionalServices = $additionalServicesQuery->get();
 
         $services = Service::where('status', 'active')->where('level', 'primary')->get();
 
@@ -641,14 +645,21 @@ class AppointmentController extends Controller
         })->values();
     }
 
-    private function calculateFamilyBoardingEstimatedPrice(Service $service, Appointment $appointment, array $petIds, array $additionalServiceIds, int $customerId): float
+    private function calculateFamilyBoardingEstimatedPrice(Service $service, Appointment $appointment, array $petIds, array $additionalServicesByPet, int $customerId): float
     {
         if (!isBoardingService($service) || empty($petIds)) {
             return 0;
         }
 
-        $selectedAdditionalServices = !empty($additionalServiceIds)
-            ? Service::whereIn('id', $additionalServiceIds)->get()
+        $allAdditionalServiceIds = collect($additionalServicesByPet)
+            ->flatten()
+            ->map(fn ($serviceId) => (int) $serviceId)
+            ->filter(fn ($serviceId) => $serviceId > 0)
+            ->unique()
+            ->values();
+
+        $additionalServiceMap = $allAdditionalServiceIds->isNotEmpty()
+            ? Service::whereIn('id', $allAdditionalServiceIds->all())->get()->keyBy('id')
             : collect();
 
         $estimatedTotal = 0;
@@ -663,7 +674,18 @@ class AppointmentController extends Controller
             $petBoardingTotal = getBoardingServicePrice($service, $priceAppointment);
             $petTotal = $petBoardingTotal === null ? 0 : $petBoardingTotal;
 
-            foreach ($selectedAdditionalServices as $additionalService) {
+            $petAdditionalServiceIds = collect($additionalServicesByPet[$petId] ?? [])
+                ->map(fn ($serviceId) => (int) $serviceId)
+                ->filter(fn ($serviceId) => $serviceId > 0)
+                ->unique()
+                ->values();
+
+            foreach ($petAdditionalServiceIds as $additionalServiceId) {
+                $additionalService = $additionalServiceMap->get($additionalServiceId);
+                if (!$additionalService) {
+                    continue;
+                }
+
                 if (isChauffeurService($additionalService)) {
                     $petTotal += calculateChauffeurServicePrice($additionalService, $customerId);
                 } else {
@@ -675,6 +697,225 @@ class AppointmentController extends Controller
         }
 
         return round($estimatedTotal, 2);
+    }
+
+    private function normalizeAdditionalServicesByPetInput(array $petIds, $rawAdditionalServicesByPet, $legacyAdditionalServices = []): array
+    {
+        $normalizedPetIds = collect($petIds)
+            ->map(fn ($petId) => (int) $petId)
+            ->filter(fn ($petId) => $petId > 0)
+            ->values();
+
+        $normalizedByPet = [];
+
+        if (is_array($rawAdditionalServicesByPet)) {
+            foreach ($rawAdditionalServicesByPet as $petId => $serviceIds) {
+                $normalizedPetId = (int) $petId;
+
+                if ($normalizedPetId <= 0 || !$normalizedPetIds->contains($normalizedPetId)) {
+                    continue;
+                }
+
+                if (is_string($serviceIds)) {
+                    $serviceIds = explode(',', $serviceIds);
+                }
+
+                $normalizedByPet[$normalizedPetId] = collect(is_array($serviceIds) ? $serviceIds : [])
+                    ->map(fn ($serviceId) => (int) $serviceId)
+                    ->filter(fn ($serviceId) => $serviceId > 0)
+                    ->unique()
+                    ->values()
+                    ->all();
+            }
+        }
+
+        if (empty($normalizedByPet)) {
+            $legacyIds = collect(is_array($legacyAdditionalServices) ? $legacyAdditionalServices : [])
+                ->map(fn ($serviceId) => (int) $serviceId)
+                ->filter(fn ($serviceId) => $serviceId > 0)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!empty($legacyIds)) {
+                if ($normalizedPetIds->count() > 1) {
+                    foreach ($normalizedPetIds as $petId) {
+                        $normalizedByPet[(int) $petId] = $legacyIds;
+                    }
+                } elseif ($normalizedPetIds->isNotEmpty()) {
+                    $normalizedByPet[(int) $normalizedPetIds->first()] = $legacyIds;
+                }
+            }
+        }
+
+        if ($normalizedPetIds->count() > 1) {
+            foreach ($normalizedPetIds as $petId) {
+                if (!array_key_exists((int) $petId, $normalizedByPet)) {
+                    $normalizedByPet[(int) $petId] = [];
+                }
+            }
+        }
+
+        ksort($normalizedByPet);
+
+        return $normalizedByPet;
+    }
+
+    private function normalizeAdditionalServiceTimeSlotsInput($rawAdditionalServiceTimeSlots, array $selectedAdditionalServiceIds, ?int $legacyTimeSlotId = null): array
+    {
+        $normalizedSelectedServiceIds = collect($selectedAdditionalServiceIds)
+            ->map(fn ($serviceId) => (int) $serviceId)
+            ->filter(fn ($serviceId) => $serviceId > 0)
+            ->unique()
+            ->values();
+
+        $normalizedMap = [];
+
+        if (is_array($rawAdditionalServiceTimeSlots)) {
+            foreach ($rawAdditionalServiceTimeSlots as $serviceId => $timeSlotId) {
+                $normalizedServiceId = (int) $serviceId;
+                $normalizedTimeSlotId = (int) $timeSlotId;
+
+                if (
+                    $normalizedServiceId <= 0
+                    || $normalizedTimeSlotId <= 0
+                    || !$normalizedSelectedServiceIds->contains($normalizedServiceId)
+                ) {
+                    continue;
+                }
+
+                $normalizedMap[$normalizedServiceId] = $normalizedTimeSlotId;
+            }
+        }
+
+        if (empty($normalizedMap) && $legacyTimeSlotId && $normalizedSelectedServiceIds->count() === 1) {
+            $normalizedMap[(int) $normalizedSelectedServiceIds->first()] = (int) $legacyTimeSlotId;
+        }
+
+        ksort($normalizedMap);
+
+        return $normalizedMap;
+    }
+
+    private function normalizeAdditionalServiceTimeSlotsByPetInput($rawAdditionalServiceTimeSlotsByPet, array $additionalServicesByPet, ?int $legacyTimeSlotId = null, $rawAdditionalServiceTimeSlots = []): array
+    {
+        $normalizedAdditionalServicesByPet = [];
+
+        foreach ($additionalServicesByPet as $petId => $serviceIds) {
+            $normalizedPetId = (int) $petId;
+            if ($normalizedPetId <= 0 || !is_array($serviceIds)) {
+                continue;
+            }
+
+            $normalizedServiceIds = collect($serviceIds)
+                ->map(fn ($serviceId) => (int) $serviceId)
+                ->filter(fn ($serviceId) => $serviceId > 0)
+                ->unique()
+                ->values()
+                ->all();
+
+            $normalizedAdditionalServicesByPet[$normalizedPetId] = $normalizedServiceIds;
+        }
+
+        $assignmentsByKey = [];
+
+        if (is_array($rawAdditionalServiceTimeSlotsByPet)) {
+            foreach ($rawAdditionalServiceTimeSlotsByPet as $petId => $serviceSlotMap) {
+                $normalizedPetId = (int) $petId;
+                if ($normalizedPetId <= 0 || !isset($normalizedAdditionalServicesByPet[$normalizedPetId]) || !is_array($serviceSlotMap)) {
+                    continue;
+                }
+
+                foreach ($serviceSlotMap as $serviceId => $timeSlotId) {
+                    $normalizedServiceId = (int) $serviceId;
+                    $normalizedTimeSlotId = (int) $timeSlotId;
+
+                    if (
+                        $normalizedServiceId <= 0
+                        || $normalizedTimeSlotId <= 0
+                        || !in_array($normalizedServiceId, $normalizedAdditionalServicesByPet[$normalizedPetId], true)
+                    ) {
+                        continue;
+                    }
+
+                    $assignmentKey = $normalizedPetId . ':' . $normalizedServiceId;
+                    $assignmentsByKey[$assignmentKey] = [
+                        'pet_id' => $normalizedPetId,
+                        'service_id' => $normalizedServiceId,
+                        'time_slot_id' => $normalizedTimeSlotId,
+                    ];
+                }
+            }
+        }
+
+        if (empty($assignmentsByKey) && is_array($rawAdditionalServiceTimeSlots)) {
+            foreach ($rawAdditionalServiceTimeSlots as $serviceId => $timeSlotId) {
+                $normalizedServiceId = (int) $serviceId;
+                $normalizedTimeSlotId = (int) $timeSlotId;
+
+                if ($normalizedServiceId <= 0 || $normalizedTimeSlotId <= 0) {
+                    continue;
+                }
+
+                foreach ($normalizedAdditionalServicesByPet as $normalizedPetId => $serviceIds) {
+                    if (!in_array($normalizedServiceId, $serviceIds, true)) {
+                        continue;
+                    }
+
+                    $assignmentKey = $normalizedPetId . ':' . $normalizedServiceId;
+                    $assignmentsByKey[$assignmentKey] = [
+                        'pet_id' => $normalizedPetId,
+                        'service_id' => $normalizedServiceId,
+                        'time_slot_id' => $normalizedTimeSlotId,
+                    ];
+                }
+            }
+        }
+
+        if (empty($assignmentsByKey) && $legacyTimeSlotId) {
+            $singlePetId = array_key_first($normalizedAdditionalServicesByPet);
+            $singlePetServiceIds = $singlePetId ? ($normalizedAdditionalServicesByPet[$singlePetId] ?? []) : [];
+
+            if ($singlePetId && count($normalizedAdditionalServicesByPet) === 1 && count($singlePetServiceIds) === 1) {
+                $singleServiceId = (int) $singlePetServiceIds[0];
+                $assignmentKey = $singlePetId . ':' . $singleServiceId;
+                $assignmentsByKey[$assignmentKey] = [
+                    'pet_id' => (int) $singlePetId,
+                    'service_id' => $singleServiceId,
+                    'time_slot_id' => (int) $legacyTimeSlotId,
+                ];
+            }
+        }
+
+        $assignments = array_values($assignmentsByKey);
+        usort($assignments, function ($left, $right) {
+            return [$left['pet_id'], $left['service_id']] <=> [$right['pet_id'], $right['service_id']];
+        });
+
+        return $assignments;
+    }
+
+    private function getAdditionalServicePetCounts(array $additionalServicesByPet): array
+    {
+        $counts = [];
+
+        foreach ($additionalServicesByPet as $petId => $serviceIds) {
+            if (!is_array($serviceIds)) {
+                continue;
+            }
+
+            $normalizedServiceIds = collect($serviceIds)
+                ->map(fn ($serviceId) => (int) $serviceId)
+                ->filter(fn ($serviceId) => $serviceId > 0)
+                ->unique()
+                ->values();
+
+            foreach ($normalizedServiceIds as $serviceId) {
+                $counts[$serviceId] = ($counts[$serviceId] ?? 0) + 1;
+            }
+        }
+
+        return $counts;
     }
 
     private function findSchedulingSolutionsByNearestSlot($serviceTimeslots, $serviceDurations, $date)
@@ -837,7 +1078,6 @@ class AppointmentController extends Controller
             'service_id' => null,
             'start_time' => $earliestStart->toTimeString(),
             'end_time' => $latestEnd->toTimeString(),
-            'date' => $date,
             'capacity' => 1,
             'booked_count' => 0,
             'status' => 'available',
@@ -974,6 +1214,14 @@ class AppointmentController extends Controller
             'package_id' => 'nullable|exists:packages,id',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
+            'additional_services_by_pet' => 'nullable|array',
+            'additional_services_by_pet.*' => 'nullable|array',
+            'additional_services_by_pet.*.*' => 'exists:services,id',
+            'additional_service_time_slots' => 'nullable|array',
+            'additional_service_time_slots.*' => 'nullable|exists:time_slots,id',
+            'additional_service_time_slots_by_pet' => 'nullable|array',
+            'additional_service_time_slots_by_pet.*' => 'nullable|array',
+            'additional_service_time_slots_by_pet.*.*' => 'nullable|exists:time_slots,id',
         ]);
 
         $capacity  = Kennel::count() + $this->spaceRoomsQuery()->count();
@@ -1004,6 +1252,7 @@ class AppointmentController extends Controller
 
         $service = Service::find($request->service_id);
         $additionalServiceIds = collect($request->input('additional_services', []))
+            ->merge(collect($request->input('additional_services_by_pet', []))->flatten(1))
             ->filter(fn ($id) => !empty($id))
             ->map(fn ($id) => intval($id))
             ->unique()
@@ -1103,6 +1352,11 @@ class AppointmentController extends Controller
             'time_slot' => 'nullable|exists:time_slots,id',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
+            'additional_services_by_pet' => 'nullable|array',
+            'additional_services_by_pet.*' => 'nullable|array',
+            'additional_services_by_pet.*.*' => 'exists:services,id',
+            'additional_service_time_slots' => 'nullable|array',
+            'additional_service_time_slots.*' => 'nullable|exists:time_slots,id',
         ]);
 
         $petIds = collect($request->input('pet', []))
@@ -1227,18 +1481,102 @@ class AppointmentController extends Controller
             }
         }
 
-        $selectedAdditionalServiceIds = $request->input('additional_services', []);
+        $additionalServicesByPet = $this->normalizeAdditionalServicesByPetInput(
+            $petIds,
+            $request->input('additional_services_by_pet', []),
+            $request->input('additional_services', [])
+        );
+
+        $selectedAdditionalServiceIds = collect($additionalServicesByPet)
+            ->flatten()
+            ->map(fn ($serviceId) => (int) $serviceId)
+            ->filter(fn ($serviceId) => $serviceId > 0)
+            ->unique()
+            ->values()
+            ->all();
+
         $selectedAdditionalServices = !empty($selectedAdditionalServiceIds)
             ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
             : collect([]);
+
+        $hasNonGroomingAdditionalService = $selectedAdditionalServices->contains(function ($additionalService) {
+            return !isGroomingService($additionalService);
+        });
+
+        if ($hasNonGroomingAdditionalService) {
+            return back()->withErrors([
+                'additional_services' => 'Additional services must be grooming services.'
+            ])->withInput();
+        }
 
         $requiresBoardingAdditionalService = isBoardingService($service);
 
         $requiresAdditionalServiceTimeSlot = $requiresBoardingAdditionalService && $selectedAdditionalServices->isNotEmpty();
 
-        if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
+        $requiredAdditionalServicePairCount = collect($additionalServicesByPet)
+            ->map(function ($serviceIds) {
+                if (!is_array($serviceIds)) {
+                    return 0;
+                }
+
+                return collect($serviceIds)
+                    ->map(fn ($serviceId) => (int) $serviceId)
+                    ->filter(fn ($serviceId) => $serviceId > 0)
+                    ->unique()
+                    ->count();
+            })
+            ->sum();
+
+        $additionalServiceTimeSlotAssignments = $this->normalizeAdditionalServiceTimeSlotsByPetInput(
+            $request->input('additional_service_time_slots_by_pet', []),
+            $additionalServicesByPet,
+            $request->filled('time_slot') ? (int) $request->time_slot : null,
+            $request->input('additional_service_time_slots', [])
+        );
+
+        $additionalTimeSlotIds = collect($additionalServiceTimeSlotAssignments)
+            ->pluck('time_slot_id')
+            ->map(fn ($slotId) => (int) $slotId)
+            ->filter(fn ($slotId) => $slotId > 0)
+            ->unique()
+            ->values();
+
+        $additionalTimeSlotsById = $additionalTimeSlotIds->isNotEmpty()
+            ? TimeSlot::with('service.category')->whereIn('id', $additionalTimeSlotIds->all())->get()->keyBy('id')
+            : collect();
+
+        $additionalServiceTimeSlotDetailsByPet = [];
+        $additionalServiceTimeSlotDetailsByService = [];
+        foreach ($additionalServiceTimeSlotAssignments as $assignment) {
+            $selectedPetId = (int) ($assignment['pet_id'] ?? 0);
+            $selectedAdditionalServiceId = (int) ($assignment['service_id'] ?? 0);
+            $selectedTimeSlotId = (int) ($assignment['time_slot_id'] ?? 0);
+
+            $timeSlotForService = $additionalTimeSlotsById->get($selectedTimeSlotId);
+            if (!$timeSlotForService || (int) $timeSlotForService->service_id !== $selectedAdditionalServiceId) {
+                return back()->withErrors([
+                    'additional_service_time_slots' => 'Please select a valid time slot for each additional service.'
+                ])->withInput();
+            }
+
+            $slotDetails = [
+                'time_slot_id' => (int) $timeSlotForService->id,
+                'service_id' => (int) $timeSlotForService->service_id,
+                'date' => $timeSlotForService->date,
+                'start_time' => $timeSlotForService->start_time,
+                'end_time' => $timeSlotForService->end_time,
+            ];
+
+            $additionalServiceTimeSlotDetailsByPet[$selectedPetId][$selectedAdditionalServiceId] = $slotDetails;
+
+            if (!isset($additionalServiceTimeSlotDetailsByService[$selectedAdditionalServiceId])) {
+                $additionalServiceTimeSlotDetailsByService[$selectedAdditionalServiceId] = $slotDetails;
+            }
+        }
+
+        if ($requiresAdditionalServiceTimeSlot && count($additionalServiceTimeSlotAssignments) !== (int) $requiredAdditionalServicePairCount) {
             return back()->withErrors([
-                'time_slot' => 'Please select a valid time slot for the additional service.'
+                'additional_service_time_slots' => 'Please select a valid time slot for each additional service.'
             ])->withInput();
         }
 
@@ -1251,12 +1589,28 @@ class AppointmentController extends Controller
             $metadata['room_name'] = $selectedRoom->name;
         }
 
-        if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
-            $metadata['additional_service_time_slot_id'] = $timeSlot->id;
-            $metadata['additional_service_time_slot_service_id'] = $timeSlot->service_id;
-            $metadata['additional_service_time_slot_date'] = $timeSlot->date;
-            $metadata['additional_service_time_slot_start_time'] = $timeSlot->start_time;
-            $metadata['additional_service_time_slot_end_time'] = $timeSlot->end_time;
+        if ($requiresAdditionalServiceTimeSlot && !empty($additionalServiceTimeSlotDetailsByPet)) {
+            $metadata['additional_service_time_slots_by_pet'] = $additionalServiceTimeSlotDetailsByPet;
+            $metadata['additional_service_time_slots'] = $additionalServiceTimeSlotDetailsByService;
+
+            $firstAdditionalServiceTimeSlot = collect($additionalServiceTimeSlotDetailsByService)->first();
+            if ($firstAdditionalServiceTimeSlot) {
+                $metadata['additional_service_time_slot_id'] = $firstAdditionalServiceTimeSlot['time_slot_id'] ?? null;
+                $metadata['additional_service_time_slot_service_id'] = $firstAdditionalServiceTimeSlot['service_id'] ?? null;
+                $metadata['additional_service_time_slot_date'] = $firstAdditionalServiceTimeSlot['date'] ?? null;
+                $metadata['additional_service_time_slot_start_time'] = $firstAdditionalServiceTimeSlot['start_time'] ?? null;
+                $metadata['additional_service_time_slot_end_time'] = $firstAdditionalServiceTimeSlot['end_time'] ?? null;
+            }
+        } else {
+            unset(
+                $metadata['additional_service_time_slots_by_pet'],
+                $metadata['additional_service_time_slots'],
+                $metadata['additional_service_time_slot_id'],
+                $metadata['additional_service_time_slot_service_id'],
+                $metadata['additional_service_time_slot_date'],
+                $metadata['additional_service_time_slot_start_time'],
+                $metadata['additional_service_time_slot_end_time']
+            );
         }
 
         if ($selectedRoom) {
@@ -1297,12 +1651,38 @@ class AppointmentController extends Controller
             ])->withInput();
         }
 
+        if ($requiresAdditionalServiceTimeSlot) {
+            $slotUsageCounts = collect($additionalServiceTimeSlotAssignments)
+                ->groupBy('time_slot_id')
+                ->map(fn ($rows) => $rows->count())
+                ->all();
+
+            foreach ($slotUsageCounts as $timeSlotId => $requiredCapacity) {
+                $slotModel = $additionalTimeSlotsById->get((int) $timeSlotId);
+                if (!$slotModel) {
+                    continue;
+                }
+
+                if (!is_null($slotModel->capacity) && ($slotModel->booked_count + $requiredCapacity) > $slotModel->capacity) {
+                    return back()->withErrors([
+                        'additional_service_time_slots' => 'One or more selected additional service time slots does not have enough capacity.'
+                    ])->withInput();
+                }
+            }
+        }
+
         $primaryPetId = $petIds[0] ?? null;
 
         if (count($petIds) > 1) {
             $metadata['family_pet_ids'] = $petIds;
         } else {
             unset($metadata['family_pet_ids']);
+        }
+
+        if (count($petIds) > 1 || !empty(collect($additionalServicesByPet)->flatten()->all())) {
+            $metadata['additional_services_by_pet'] = $additionalServicesByPet;
+        } else {
+            unset($metadata['additional_services_by_pet']);
         }
 
         $appointment = new Appointment;
@@ -1330,14 +1710,21 @@ class AppointmentController extends Controller
             $startDateTime = Carbon::parse($request->boarding_start_datetime);
             $endDateTime = Carbon::parse($request->boarding_end_datetime);
 
-            if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
-                $timeSlotStart = Carbon::parse($timeSlot->date . ' ' . $timeSlot->start_time);
-                $timeSlotEnd = Carbon::parse($timeSlot->date . ' ' . $timeSlot->end_time);
+            if ($requiresAdditionalServiceTimeSlot) {
+                foreach ($additionalServiceTimeSlotAssignments as $assignment) {
+                    $slotDetails = $additionalServiceTimeSlotDetailsByPet[(int) ($assignment['pet_id'] ?? 0)][(int) ($assignment['service_id'] ?? 0)] ?? null;
+                    if (!$slotDetails) {
+                        continue;
+                    }
 
-                if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
-                    return back()->withErrors([
-                        'time_slot' => 'The selected additional service time slot must end before the pick up time.'
-                    ])->withInput();
+                    $timeSlotStart = Carbon::parse($slotDetails['date'] . ' ' . $slotDetails['start_time']);
+                    $timeSlotEnd = Carbon::parse($slotDetails['date'] . ' ' . $slotDetails['end_time']);
+
+                    if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
+                        return back()->withErrors([
+                            'additional_service_time_slots' => 'Each additional service time slot must end before the pick up time.'
+                        ])->withInput();
+                    }
                 }
             }
 
@@ -1351,15 +1738,15 @@ class AppointmentController extends Controller
                     $service,
                     $appointment,
                     $petIds,
-                    $request->input('additional_services', []),
+                    $additionalServicesByPet,
                     (int) $request->customer
                 );
             }
         }
 
         $appointment->status = 'checked_in';
-        $appointment->additional_service_ids = $request->filled('additional_services')
-            ? implode(',', $request->additional_services)
+        $appointment->additional_service_ids = !empty($selectedAdditionalServiceIds)
+            ? implode(',', $selectedAdditionalServiceIds)
             : null;
         $appointment->metadata = !empty($metadata) ? $metadata : null;
         $appointment->save();
@@ -1388,6 +1775,26 @@ class AppointmentController extends Controller
                     $timeSlot->status = 'full';
                 }
                 $timeSlot->save();
+            }
+        }
+
+        if ($requiresAdditionalServiceTimeSlot && !empty($additionalServiceTimeSlotAssignments)) {
+            $slotUsageCounts = collect($additionalServiceTimeSlotAssignments)
+                ->groupBy('time_slot_id')
+                ->map(fn ($rows) => $rows->count())
+                ->all();
+
+            foreach ($slotUsageCounts as $timeSlotId => $requiredCapacity) {
+                $slotModel = $additionalTimeSlotsById->get((int) $timeSlotId);
+                if (!$slotModel) {
+                    continue;
+                }
+
+                $slotModel->booked_count += $requiredCapacity;
+                if (!is_null($slotModel->capacity) && $slotModel->booked_count >= $slotModel->capacity) {
+                    $slotModel->status = 'full';
+                }
+                $slotModel->save();
             }
         }
 
@@ -1459,7 +1866,12 @@ class AppointmentController extends Controller
     {
         $appointment = Appointment::findOrFail($id);
         $services = Service::where('status', 'active')->where('level', 'primary')->get();
-        $additionalServices = Service::where('status', 'active')->whereNot('id', $appointment->service_id)->get();
+        $additionalServices = Service::where('status', 'active')
+            ->whereNot('id', $appointment->service_id)
+            ->whereHas('category', function($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%groom%']);
+            })
+            ->get();
 
         $service = Service::with('category')->find($appointment->service_id);
         $timeSlots = collect([]);
@@ -1500,6 +1912,9 @@ class AppointmentController extends Controller
             })?->id;
         }
 
+        $appointmentAdditionalServicesByPet = $appointment->additional_services_by_pet;
+        $selectedAdditionalServiceIdsFlat = $appointment->additional_service_ids_flat;
+
         return view('appointments.update', compact(
             'appointment',
             'services',
@@ -1508,7 +1923,9 @@ class AppointmentController extends Controller
             'kennels',
             'rooms',
             'selectedAssignmentRoomId',
-            'selectedAssignmentKennelId'
+            'selectedAssignmentKennelId',
+            'appointmentAdditionalServicesByPet',
+            'selectedAdditionalServiceIdsFlat'
         ));
     }
 
@@ -1529,6 +1946,14 @@ class AppointmentController extends Controller
             'time_slot' => 'nullable',
             'additional_services' => 'nullable|array',
             'additional_services.*' => 'exists:services,id',
+            'additional_services_by_pet' => 'nullable|array',
+            'additional_services_by_pet.*' => 'nullable|array',
+            'additional_services_by_pet.*.*' => 'exists:services,id',
+            'additional_service_time_slots' => 'nullable|array',
+            'additional_service_time_slots.*' => 'nullable|exists:time_slots,id',
+            'additional_service_time_slots_by_pet' => 'nullable|array',
+            'additional_service_time_slots_by_pet.*' => 'nullable|array',
+            'additional_service_time_slots_by_pet.*.*' => 'nullable|exists:time_slots,id',
         ]);
 
         $appointment = Appointment::findOrFail($request->appointment_id);
@@ -1646,18 +2071,108 @@ class AppointmentController extends Controller
             unset($metadata['family_pet_ids']);
         }
 
-        $selectedAdditionalServiceIds = $request->input('additional_services', []);
+        $additionalServicesByPet = $this->normalizeAdditionalServicesByPetInput(
+            $petIds,
+            $request->input('additional_services_by_pet', []),
+            $request->input('additional_services', [])
+        );
+
+        if (count($petIds) > 1 || !empty(collect($additionalServicesByPet)->flatten()->all())) {
+            $metadata['additional_services_by_pet'] = $additionalServicesByPet;
+        } else {
+            unset($metadata['additional_services_by_pet']);
+        }
+
+        $selectedAdditionalServiceIds = collect($additionalServicesByPet)
+            ->flatten()
+            ->map(fn ($serviceId) => (int) $serviceId)
+            ->filter(fn ($serviceId) => $serviceId > 0)
+            ->unique()
+            ->values()
+            ->all();
+
         $selectedAdditionalServices = !empty($selectedAdditionalServiceIds)
             ? Service::with('category')->whereIn('id', $selectedAdditionalServiceIds)->get()
             : collect([]);
+
+        $hasNonGroomingAdditionalService = $selectedAdditionalServices->contains(function ($additionalService) {
+            return !isGroomingService($additionalService);
+        });
+
+        if ($hasNonGroomingAdditionalService) {
+            return back()->withErrors([
+                'additional_services' => 'Additional services must be grooming services.'
+            ])->withInput();
+        }
 
         $requiresBoardingAdditionalService = isBoardingService($service);
 
         $requiresAdditionalServiceTimeSlot = $requiresBoardingAdditionalService && $selectedAdditionalServices->isNotEmpty();
 
-        if ($requiresAdditionalServiceTimeSlot && !$request->filled('time_slot')) {
+        $requiredAdditionalServicePairCount = collect($additionalServicesByPet)
+            ->map(function ($serviceIds) {
+                if (!is_array($serviceIds)) {
+                    return 0;
+                }
+
+                return collect($serviceIds)
+                    ->map(fn ($serviceId) => (int) $serviceId)
+                    ->filter(fn ($serviceId) => $serviceId > 0)
+                    ->unique()
+                    ->count();
+            })
+            ->sum();
+
+        $additionalServiceTimeSlotAssignments = $this->normalizeAdditionalServiceTimeSlotsByPetInput(
+            $request->input('additional_service_time_slots_by_pet', []),
+            $additionalServicesByPet,
+            $request->filled('time_slot') ? (int) $request->time_slot : null,
+            $request->input('additional_service_time_slots', [])
+        );
+
+        $additionalTimeSlotIds = collect($additionalServiceTimeSlotAssignments)
+            ->pluck('time_slot_id')
+            ->map(fn ($slotId) => (int) $slotId)
+            ->filter(fn ($slotId) => $slotId > 0)
+            ->unique()
+            ->values();
+
+        $additionalTimeSlotsById = $additionalTimeSlotIds->isNotEmpty()
+            ? TimeSlot::with('service.category')->whereIn('id', $additionalTimeSlotIds->all())->get()->keyBy('id')
+            : collect();
+
+        $additionalServiceTimeSlotDetailsByPet = [];
+        $additionalServiceTimeSlotDetailsByService = [];
+        foreach ($additionalServiceTimeSlotAssignments as $assignment) {
+            $selectedPetId = (int) ($assignment['pet_id'] ?? 0);
+            $selectedAdditionalServiceId = (int) ($assignment['service_id'] ?? 0);
+            $selectedTimeSlotId = (int) ($assignment['time_slot_id'] ?? 0);
+
+            $timeSlotForService = $additionalTimeSlotsById->get($selectedTimeSlotId);
+            if (!$timeSlotForService || (int) $timeSlotForService->service_id !== $selectedAdditionalServiceId) {
+                return back()->withErrors([
+                    'additional_service_time_slots' => 'Please select a valid time slot for each additional service.'
+                ])->withInput();
+            }
+
+            $slotDetails = [
+                'time_slot_id' => (int) $timeSlotForService->id,
+                'service_id' => (int) $timeSlotForService->service_id,
+                'date' => $timeSlotForService->date,
+                'start_time' => $timeSlotForService->start_time,
+                'end_time' => $timeSlotForService->end_time,
+            ];
+
+            $additionalServiceTimeSlotDetailsByPet[$selectedPetId][$selectedAdditionalServiceId] = $slotDetails;
+
+            if (!isset($additionalServiceTimeSlotDetailsByService[$selectedAdditionalServiceId])) {
+                $additionalServiceTimeSlotDetailsByService[$selectedAdditionalServiceId] = $slotDetails;
+            }
+        }
+
+        if ($requiresAdditionalServiceTimeSlot && count($additionalServiceTimeSlotAssignments) !== (int) $requiredAdditionalServicePairCount) {
             return back()->withErrors([
-                'time_slot' => 'Please select a valid time slot for the additional service.'
+                'additional_service_time_slots' => 'Please select a valid time slot for each additional service.'
             ])->withInput();
         }
 
@@ -1668,14 +2183,22 @@ class AppointmentController extends Controller
             unset($metadata['room_id'], $metadata['room_name']);
         }
 
-        if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
-            $metadata['additional_service_time_slot_id'] = $timeSlot->id;
-            $metadata['additional_service_time_slot_service_id'] = $timeSlot->service_id;
-            $metadata['additional_service_time_slot_date'] = $timeSlot->date;
-            $metadata['additional_service_time_slot_start_time'] = $timeSlot->start_time;
-            $metadata['additional_service_time_slot_end_time'] = $timeSlot->end_time;
+        if ($requiresAdditionalServiceTimeSlot && !empty($additionalServiceTimeSlotDetailsByPet)) {
+            $metadata['additional_service_time_slots_by_pet'] = $additionalServiceTimeSlotDetailsByPet;
+            $metadata['additional_service_time_slots'] = $additionalServiceTimeSlotDetailsByService;
+
+            $firstAdditionalServiceTimeSlot = collect($additionalServiceTimeSlotDetailsByService)->first();
+            if ($firstAdditionalServiceTimeSlot) {
+                $metadata['additional_service_time_slot_id'] = $firstAdditionalServiceTimeSlot['time_slot_id'] ?? null;
+                $metadata['additional_service_time_slot_service_id'] = $firstAdditionalServiceTimeSlot['service_id'] ?? null;
+                $metadata['additional_service_time_slot_date'] = $firstAdditionalServiceTimeSlot['date'] ?? null;
+                $metadata['additional_service_time_slot_start_time'] = $firstAdditionalServiceTimeSlot['start_time'] ?? null;
+                $metadata['additional_service_time_slot_end_time'] = $firstAdditionalServiceTimeSlot['end_time'] ?? null;
+            }
         } else {
             unset(
+                $metadata['additional_service_time_slots_by_pet'],
+                $metadata['additional_service_time_slots'],
                 $metadata['additional_service_time_slot_id'],
                 $metadata['additional_service_time_slot_service_id'],
                 $metadata['additional_service_time_slot_date'],
@@ -1739,14 +2262,21 @@ class AppointmentController extends Controller
             $startDateTime = Carbon::parse($request->boarding_start_datetime);
             $endDateTime = Carbon::parse($request->boarding_end_datetime);
 
-            if ($requiresAdditionalServiceTimeSlot && $timeSlot) {
-                $timeSlotStart = Carbon::parse($timeSlot->date . ' ' . $timeSlot->start_time);
-                $timeSlotEnd = Carbon::parse($timeSlot->date . ' ' . $timeSlot->end_time);
+            if ($requiresAdditionalServiceTimeSlot) {
+                foreach ($additionalServiceTimeSlotAssignments as $assignment) {
+                    $slotDetails = $additionalServiceTimeSlotDetailsByPet[(int) ($assignment['pet_id'] ?? 0)][(int) ($assignment['service_id'] ?? 0)] ?? null;
+                    if (!$slotDetails) {
+                        continue;
+                    }
 
-                if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
-                    return back()->withErrors([
-                        'time_slot' => 'The selected additional service time slot must end before the pick up time.'
-                    ])->withInput();
+                    $timeSlotStart = Carbon::parse($slotDetails['date'] . ' ' . $slotDetails['start_time']);
+                    $timeSlotEnd = Carbon::parse($slotDetails['date'] . ' ' . $slotDetails['end_time']);
+
+                    if ($timeSlotEnd->gt($endDateTime) || ($endDateTime->gt($timeSlotStart) && $endDateTime->lt($timeSlotEnd))) {
+                        return back()->withErrors([
+                            'additional_service_time_slots' => 'Each additional service time slot must end before the pick up time.'
+                        ])->withInput();
+                    }
                 }
             }
 
@@ -1769,7 +2299,7 @@ class AppointmentController extends Controller
                 $service,
                 $appointment,
                 $petIds,
-                $selectedAdditionalServiceIds,
+                $additionalServicesByPet,
                 (int) $request->customer
             );
         }
@@ -2831,12 +3361,41 @@ class AppointmentController extends Controller
         $appointment->load('service.category');
         $mainServiceName = $appointment->service->name ?? '';
 
-        $additionalServiceNames = [];
-        if ($appointment->additional_service_ids) {
-            $additionalIds = explode(',', $appointment->additional_service_ids);
-            $additionalServices = Service::whereIn('id', $additionalIds)->get();
-            $additionalServiceNames = $additionalServices->pluck('name')->toArray();
+        $additionalServicesByPet = $appointment->additional_services_by_pet ?? [];
+        $flatAdditionalServiceIds = collect($additionalServicesByPet)
+            ->flatten()
+            ->map(fn ($serviceId) => (int) $serviceId)
+            ->filter(fn ($serviceId) => $serviceId > 0)
+            ->unique()
+            ->values();
+
+        $additionalServices = $flatAdditionalServiceIds->isNotEmpty()
+            ? Service::whereIn('id', $flatAdditionalServiceIds->all())->get()->keyBy('id')
+            : collect();
+
+        $additionalServiceNames = $additionalServices->pluck('name')->values()->all();
+
+        $petsForAdditionalEmail = $appointment->family_pets;
+        if ($petsForAdditionalEmail->isEmpty() && $appointment->pet) {
+            $petsForAdditionalEmail = collect([$appointment->pet]);
         }
+
+        $additionalServicesGroupedByPet = $petsForAdditionalEmail->map(function ($pet) use ($additionalServicesByPet, $additionalServices) {
+            $serviceNames = collect($additionalServicesByPet[$pet->id] ?? [])
+                ->map(fn ($serviceId) => $additionalServices->get((int) $serviceId)?->name)
+                ->filter()
+                ->values()
+                ->all();
+
+            if (empty($serviceNames)) {
+                return null;
+            }
+
+            return [
+                'pet_name' => $pet->name,
+                'services' => $serviceNames,
+            ];
+        })->filter()->values()->all();
 
         $groupClassNames = [];
         if (isGroupClassService($appointment->service) && $appointment->metadata && isset($appointment->metadata['group_class_ids'])) {
@@ -2894,7 +3453,12 @@ class AppointmentController extends Controller
                             'description' => $itemDescription,
                             'price' => $itemPrice
                         ];
-                    } elseif (in_array($itemDescription, $additionalServiceNames)) {
+                    } elseif (
+                        in_array($itemDescription, $additionalServiceNames)
+                        || collect($additionalServiceNames)->contains(function ($serviceName) use ($itemDescription) {
+                            return str_starts_with($itemDescription, $serviceName . ' - ');
+                        })
+                    ) {
                         $additionalServiceItems[] = [
                             'description' => $itemDescription,
                             'price' => $itemPrice
@@ -2926,6 +3490,7 @@ class AppointmentController extends Controller
             'notes' => $invoice->notes,
             'main_service_items' => $mainServiceItems,
             'additional_service_items' => $additionalServiceItems,
+            'additional_services_grouped_by_pet' => $additionalServicesGroupedByPet,
             'inventory_items' => $inventoryItems,
             'total_service_price' => $totalServicePrice,
             'estimated_price' => $totalServicePrice,
@@ -3185,6 +3750,66 @@ class AppointmentController extends Controller
 
     private function releaseTimeSlots(Appointment $appointment)
     {
+        $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
+        $releasedAdditionalServiceSlots = false;
+
+        if (!empty($metadata['additional_service_time_slots_by_pet']) && is_array($metadata['additional_service_time_slots_by_pet'])) {
+            $slotReleaseCounts = [];
+
+            foreach ($metadata['additional_service_time_slots_by_pet'] as $petId => $serviceSlots) {
+                if (!is_array($serviceSlots)) {
+                    continue;
+                }
+
+                foreach ($serviceSlots as $serviceId => $slotDetails) {
+                    $slotId = (int) ($slotDetails['time_slot_id'] ?? 0);
+                    if ($slotId <= 0) {
+                        continue;
+                    }
+
+                    $slotReleaseCounts[$slotId] = ($slotReleaseCounts[$slotId] ?? 0) + 1;
+                }
+            }
+
+            foreach ($slotReleaseCounts as $slotId => $releaseCount) {
+                $slot = TimeSlot::find((int) $slotId);
+                if (!$slot) {
+                    continue;
+                }
+
+                $slot->booked_count = max(0, (int) $slot->booked_count - (int) $releaseCount);
+                if (!is_null($slot->capacity) && $slot->booked_count < $slot->capacity) {
+                    $slot->status = 'available';
+                }
+                $slot->save();
+            }
+
+            $releasedAdditionalServiceSlots = !empty($slotReleaseCounts);
+        }
+
+        if (!$releasedAdditionalServiceSlots && !empty($metadata['additional_service_time_slots']) && is_array($metadata['additional_service_time_slots'])) {
+            $servicePetCounts = $this->getAdditionalServicePetCounts($appointment->additional_services_by_pet ?? []);
+
+            foreach ($metadata['additional_service_time_slots'] as $serviceId => $slotDetails) {
+                $slotId = (int) ($slotDetails['time_slot_id'] ?? 0);
+                if ($slotId <= 0) {
+                    continue;
+                }
+
+                $slot = TimeSlot::find($slotId);
+                if (!$slot) {
+                    continue;
+                }
+
+                $releaseCount = max(1, (int) ($servicePetCounts[(int) $serviceId] ?? 0));
+                $slot->booked_count = max(0, (int) $slot->booked_count - $releaseCount);
+                if (!is_null($slot->capacity) && $slot->booked_count < $slot->capacity) {
+                    $slot->status = 'available';
+                }
+                $slot->save();
+            }
+        }
+
         if ($appointment->metadata && isset($appointment->metadata['used_slot_ids'])) {
             $usedSlotIds = is_array($appointment->metadata['used_slot_ids'])
                 ? $appointment->metadata['used_slot_ids']

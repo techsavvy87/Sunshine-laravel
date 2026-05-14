@@ -211,13 +211,39 @@
     @endif
     @if($appointment->additional_service_ids)
       @php
-        $additionalIds = explode(',', $appointment->additional_service_ids);
-        $additionalServices = \App\Models\Service::whereIn('id', $additionalIds)->get();
+        $additionalServicesByPet = $appointment->additional_services_by_pet ?? [];
+        $allAdditionalIds = collect($additionalServicesByPet)
+          ->flatten()
+          ->map(fn($id) => (int) $id)
+          ->filter(fn($id) => $id > 0)
+          ->unique()
+          ->values();
+        $additionalServiceNameMap = $allAdditionalIds->isNotEmpty()
+          ? \App\Models\Service::whereIn('id', $allAdditionalIds->all())->pluck('name', 'id')
+          : collect();
+
+        $petsForAdditionalDisplay = $appointment->family_pets;
+        if ($petsForAdditionalDisplay->isEmpty() && $appointment->pet) {
+          $petsForAdditionalDisplay = collect([$appointment->pet]);
+        }
+
+        $groupedAdditionalNames = $petsForAdditionalDisplay->map(function ($pet) use ($additionalServicesByPet, $additionalServiceNameMap) {
+          $petServiceNames = collect($additionalServicesByPet[$pet->id] ?? [])
+            ->map(fn($serviceId) => $additionalServiceNameMap->get((int) $serviceId))
+            ->filter()
+            ->values();
+
+          if ($petServiceNames->isEmpty()) {
+            return null;
+          }
+
+          return $pet->name . ': ' . $petServiceNames->join(', ');
+        })->filter()->values();
       @endphp
-      @if($additionalServices->count() > 0)
+      @if($groupedAdditionalNames->isNotEmpty())
         <div class="flex items-center gap-2">
           <p class="font-medium">Additional: </p>
-          <p class="text-base-content/70">{{ $additionalServices->pluck('name')->join(', ') }}</p>
+          <p class="text-base-content/70">{{ $groupedAdditionalNames->join(' | ') }}</p>
         </div>
       @endif
     @endif
@@ -1132,39 +1158,86 @@
                           <td>${{ number_format($servicePrice, 2) }}</td>
                           <td></td>
                         </tr>
-                        @if($appointment->additional_service_ids)
-                          @php
-                            $additionalIds = explode(',', $appointment->additional_service_ids);
-                            $additionalServices = \App\Models\Service::whereIn('id', $additionalIds)->get();
-                          @endphp
-                          @foreach($additionalServices as $additionalService)
-                            @php
-                              $isChauffeurAdditional = array_key_exists($additionalService->id, $chauffeurServicePrices);
-                              $additionalPrice = $isChauffeurAdditional
-                                ? floatval($chauffeurServicePrices[$additionalService->id])
-                                : getServicePrice($additionalService, $appointment->pet->size);
-                              if ($isBoardingForPricing && $petCountForPricing > 1 && !$isChauffeurAdditional) {
-                                $additionalPrice = $additionalPrice * $petCountForPricing;
-                              }
-                              $additionalPricePerMile = floatval($additionalService->price_per_mile ?? 0);
-                            @endphp
-                            <tr class="service-row">
-                              <td>{{ $row++ }}</td>
-                              <td width="56%">
-                                <div>{{ $additionalService->name }}</div>
-                                @if($isBoardingForPricing && $petCountForPricing > 1 && !$isChauffeurAdditional)
-                                  <div class="text-[10px] text-base-content/60">{{ $petCountForPricing }} pets</div>
-                                @endif
-                                @if($isChauffeurAdditional && $chauffeurDistanceMiles !== null)
-                                  <div class="text-[10px] text-base-content/60">
-                                    {{ number_format($chauffeurDistanceMiles, 2) }} mi x ${{ number_format($additionalPricePerMile, 2) }}/mi
-                                  </div>
-                                @endif
-                              </td>
-                              <td>${{ number_format($additionalPrice, 2) }}</td>
-                              <td></td>
-                            </tr>
-                          @endforeach
+                        @php
+                          $additionalServicesByPet = $appointment->additional_services_by_pet ?? [];
+                          $flatAdditionalIds = collect($additionalServicesByPet)
+                            ->flatten()
+                            ->map(fn($id) => (int) $id)
+                            ->filter(fn($id) => $id > 0)
+                            ->unique()
+                            ->values();
+                          $additionalServiceMap = $flatAdditionalIds->isNotEmpty()
+                            ? \App\Models\Service::whereIn('id', $flatAdditionalIds->all())->get()->keyBy('id')
+                            : collect();
+                        @endphp
+
+                        @if($flatAdditionalIds->isNotEmpty())
+                          @if($isBoardingForPricing)
+                            @foreach($familyPricingPets as $pricingPet)
+                              @php
+                                $petServiceIds = collect($additionalServicesByPet[$pricingPet->id] ?? [])
+                                  ->map(fn($id) => (int) $id)
+                                  ->filter(fn($id) => $id > 0)
+                                  ->unique()
+                                  ->values();
+                              @endphp
+                              @foreach($petServiceIds as $petServiceId)
+                                @php
+                                  $additionalService = $additionalServiceMap->get($petServiceId);
+                                  if (!$additionalService) {
+                                    continue;
+                                  }
+
+                                  $isChauffeurAdditional = array_key_exists($additionalService->id, $chauffeurServicePrices);
+                                  $additionalPrice = $isChauffeurAdditional
+                                    ? floatval($chauffeurServicePrices[$additionalService->id])
+                                    : getServicePrice($additionalService, $pricingPet->size ?? ($appointment->pet->size ?? 'medium'));
+                                  $additionalPricePerMile = floatval($additionalService->price_per_mile ?? 0);
+                                @endphp
+                                <tr class="service-row">
+                                  <td>{{ $row++ }}</td>
+                                  <td width="56%">
+                                    <div>{{ $additionalService->name }} - {{ $pricingPet->name ?? 'Pet' }}</div>
+                                    @if($isChauffeurAdditional && $chauffeurDistanceMiles !== null)
+                                      <div class="text-[10px] text-base-content/60">
+                                        {{ number_format($chauffeurDistanceMiles, 2) }} mi x ${{ number_format($additionalPricePerMile, 2) }}/mi
+                                      </div>
+                                    @endif
+                                  </td>
+                                  <td>${{ number_format($additionalPrice, 2) }}</td>
+                                  <td></td>
+                                </tr>
+                              @endforeach
+                            @endforeach
+                          @else
+                            @foreach($flatAdditionalIds as $petServiceId)
+                              @php
+                                $additionalService = $additionalServiceMap->get($petServiceId);
+                                if (!$additionalService) {
+                                  continue;
+                                }
+
+                                $isChauffeurAdditional = array_key_exists($additionalService->id, $chauffeurServicePrices);
+                                $additionalPrice = $isChauffeurAdditional
+                                  ? floatval($chauffeurServicePrices[$additionalService->id])
+                                  : getServicePrice($additionalService, $appointment->pet->size);
+                                $additionalPricePerMile = floatval($additionalService->price_per_mile ?? 0);
+                              @endphp
+                              <tr class="service-row">
+                                <td>{{ $row++ }}</td>
+                                <td width="56%">
+                                  <div>{{ $additionalService->name }}</div>
+                                  @if($isChauffeurAdditional && $chauffeurDistanceMiles !== null)
+                                    <div class="text-[10px] text-base-content/60">
+                                      {{ number_format($chauffeurDistanceMiles, 2) }} mi x ${{ number_format($additionalPricePerMile, 2) }}/mi
+                                    </div>
+                                  @endif
+                                </td>
+                                <td>${{ number_format($additionalPrice, 2) }}</td>
+                                <td></td>
+                              </tr>
+                            @endforeach
+                          @endif
                         @endif
                       @endif
                       @if($invoice && $invoice->items)

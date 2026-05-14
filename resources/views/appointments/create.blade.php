@@ -109,19 +109,25 @@
           <div id="additional_services_group">
             <div class="space-y-2">
               <label class="fieldset-label" for="additional_services">Additional Services</label>
-              <select class="select w-full" name="additional_services[]" id="additional_services" multiple>
-                @foreach($additionalServices as $service)
-                  <option value="{{ $service->id }}">{{ $service->name }}</option>
-                @endforeach
-              </select>
+              <div id="additional_services_single_wrapper">
+                <select class="select w-full" name="additional_services[]" id="additional_services" multiple>
+                  @foreach($additionalServices as $service)
+                    <option value="{{ $service->id }}">{{ $service->name }}</option>
+                  @endforeach
+                </select>
+              </div>
+              <div id="additional_services_by_pet_container" class="hidden space-y-3"></div>
             </div>
           </div>
           <div class="space-y-2 hidden" id="time_slot_group">
             <label class="fieldset-label" for="time_slot">Start Time - End Time*</label>
-            <select class="select w-full" name="time_slot" id="time_slot">
-              <option value="" hidden selected>Choose a time slot</option>
-            </select>
-            <input type="hidden" name="time_slot_data" id="time_slot_data" />
+            <div id="single_time_slot_wrapper">
+              <select class="select w-full" name="time_slot" id="time_slot">
+                <option value="" hidden selected>Choose a time slot</option>
+              </select>
+              <input type="hidden" name="time_slot_data" id="time_slot_data" />
+            </div>
+            <div id="additional_service_time_slots_container" class="hidden space-y-3"></div>
           </div>
           <div class="space-y-2" id="staff_group">
             <label class="fieldset-label" for="staff">Staff</label>
@@ -375,6 +381,7 @@
       });
 
       $('#pet').on('change', function() {
+        renderAdditionalServicesByPetSelectors();
         updateBoardingLocationField();
         refreshAdditionalServiceTimeSlotsIfNeeded();
         refreshAvailableKennels();
@@ -390,6 +397,8 @@
       });
 
       window.originalAdditionalOptions = $('#additional_services').html();
+      window.additionalServicesByPetState = {};
+      window.selectedAdditionalServiceTimeslotsByPair = {};
 
       // Define servicesData globally so it's accessible to all functions
       window.servicesData = [];
@@ -421,13 +430,13 @@
         closeOnSelect: false
       }).on('change', function() {
         syncAdditionalServiceTimeSlotVisibility();
-        refreshAdditionalServiceTimeSlotsIfNeeded();
       });
 
       var selectedServiceId = $('#service').val();
       if (selectedServiceId) {
         checkServiceType(selectedServiceId);
         updateAdditionalServices(selectedServiceId);
+        renderAdditionalServicesByPetSelectors();
         updateBoardingLocationField();
         syncAdditionalServiceTimeSlotVisibility();
         refreshAdditionalServiceTimeSlotsIfNeeded();
@@ -527,6 +536,7 @@
 
       checkServiceType(serviceId);
       updateAdditionalServices(serviceId);
+      renderAdditionalServicesByPetSelectors();
       syncAdditionalServiceTimeSlotVisibility();
       refreshAdditionalServiceTimeSlotsIfNeeded();
       refreshAvailableKennels();
@@ -592,7 +602,6 @@
         closeOnSelect: false
       }).on('change', function() {
         syncAdditionalServiceTimeSlotVisibility();
-        refreshAdditionalServiceTimeSlotsIfNeeded();
       });
 
       if (currentValues.length > 0) {
@@ -600,10 +609,169 @@
       } else {
         syncAdditionalServiceTimeSlotVisibility();
       }
+
+      renderAdditionalServicesByPetSelectors();
+    }
+
+    function getSelectedPetDetails() {
+      return ($('#pet option:selected') || []).map(function(_, option) {
+        return {
+          id: String(option.value),
+          name: $(option).text().trim()
+        };
+      }).get();
+    }
+
+    function getPerPetAdditionalServicesPayload() {
+      return Object.keys(window.additionalServicesByPetState || {}).reduce(function(payload, petId) {
+        payload[String(petId)] = (window.additionalServicesByPetState[petId] || []).map(function(serviceId) {
+          return String(serviceId);
+        });
+        return payload;
+      }, {});
+    }
+
+    function syncAdditionalServicesByPetStateFromDom() {
+      if (!window.additionalServicesByPetState) {
+        window.additionalServicesByPetState = {};
+      }
+
+      const selectedPetIds = getSelectedPetIds().map(function(petId) {
+        return String(petId);
+      });
+
+      Object.keys(window.additionalServicesByPetState).forEach(function(petId) {
+        if (!selectedPetIds.includes(String(petId))) {
+          delete window.additionalServicesByPetState[petId];
+        }
+      });
+
+      $('.pet-additional-services').each(function() {
+        const petId = String($(this).data('pet-id') || '');
+        if (!petId) {
+          return;
+        }
+
+        window.additionalServicesByPetState[petId] = ($(this).val() || []).map(function(serviceId) {
+          return String(serviceId);
+        });
+      });
+
+      pruneAdditionalServiceTimeSlotState();
+    }
+
+    function pruneAdditionalServiceTimeSlotState() {
+      if (!window.selectedAdditionalServiceTimeslotsByPair) {
+        window.selectedAdditionalServiceTimeslotsByPair = {};
+      }
+
+      const validPairKeys = getSelectedAdditionalServicePairsByPet().map(function(pair) {
+        return pair.pairKey;
+      });
+
+      Object.keys(window.selectedAdditionalServiceTimeslotsByPair).forEach(function(pairKey) {
+        if (!validPairKeys.includes(pairKey)) {
+          delete window.selectedAdditionalServiceTimeslotsByPair[pairKey];
+        }
+      });
+    }
+
+    function collectSelectedAdditionalServiceIds() {
+      const perPetPayload = getPerPetAdditionalServicesPayload();
+      const flattenedPerPetIds = Object.keys(perPetPayload).reduce(function(carry, petId) {
+        return carry.concat(perPetPayload[petId] || []);
+      }, []);
+
+      const singleIds = $('#additional_services').prop('disabled') ? [] : ($('#additional_services').val() || []);
+
+      return Array.from(new Set(singleIds.concat(flattenedPerPetIds).filter(function(id) {
+        return String(id).trim() !== '';
+      })));
+    }
+
+    function renderAdditionalServicesByPetSelectors() {
+      const selectedPets = getSelectedPetDetails();
+      const usePerPetSelectors = selectedPets.length > 1;
+      const serviceId = $('#service').val();
+
+      syncAdditionalServicesByPetStateFromDom();
+
+      if (!usePerPetSelectors) {
+        const singlePetId = selectedPets.length === 1 ? selectedPets[0].id : null;
+        $('#additional_services_by_pet_container').addClass('hidden').empty();
+        $('#additional_services_single_wrapper').removeClass('hidden');
+        $('#additional_services').prop('disabled', false);
+        if (singlePetId && Array.isArray(window.additionalServicesByPetState[singlePetId])) {
+          $('#additional_services').val(window.additionalServicesByPetState[singlePetId]).trigger('change');
+        }
+        return;
+      }
+
+      const $container = $('#additional_services_by_pet_container');
+      $container.empty();
+
+      const selectedPetIds = selectedPets.map(function(pet) {
+        return String(pet.id);
+      });
+
+      Object.keys(window.additionalServicesByPetState || {}).forEach(function(petId) {
+        if (!selectedPetIds.includes(String(petId))) {
+          delete window.additionalServicesByPetState[petId];
+        }
+      });
+
+      selectedPets.forEach(function(pet) {
+        const currentSelections = (window.additionalServicesByPetState[pet.id] || []).map(function(serviceId) {
+          return String(serviceId);
+        });
+        let optionsHtml = '';
+
+        window.additionalServicesData.forEach(function(additionalService) {
+          if (String(additionalService.id) === String(serviceId)) {
+            return;
+          }
+
+          const isSelected = currentSelections.includes(String(additionalService.id));
+          optionsHtml += '<option value="' + additionalService.id + '"' + (isSelected ? ' selected' : '') + '>' + additionalService.name + '</option>';
+        });
+
+        const petBlockHtml = `
+          <div class="space-y-2 rounded-box border border-base-300 p-3">
+            <label class="fieldset-label">${pet.name}</label>
+            <select class="select w-full pet-additional-services" name="additional_services_by_pet[${pet.id}][]" data-pet-id="${pet.id}" multiple>
+              ${optionsHtml}
+            </select>
+          </div>
+        `;
+
+        $container.append(petBlockHtml);
+      });
+
+      $('.pet-additional-services').select2({
+        placeholder: 'Choose additional services (optional)',
+        allowClear: true,
+        multiple: true,
+        width: '100%',
+        closeOnSelect: false
+      }).on('change', function() {
+        const petId = String($(this).data('pet-id') || '');
+        if (petId) {
+          window.additionalServicesByPetState[petId] = ($(this).val() || []).map(function(serviceId) {
+            return String(serviceId);
+          });
+        }
+
+        pruneAdditionalServiceTimeSlotState();
+        syncAdditionalServiceTimeSlotVisibility();
+      });
+
+      $('#additional_services_single_wrapper').addClass('hidden');
+      $('#additional_services').prop('disabled', true).val([]).trigger('change');
+      $('#additional_services_by_pet_container').removeClass('hidden');
     }
 
     function getSelectedAdditionalServiceForTimeSlot() {
-      const selectedAdditionalServiceIds = $('#additional_services').val() || [];
+      const selectedAdditionalServiceIds = collectSelectedAdditionalServiceIds();
       return selectedAdditionalServiceIds.length > 0 ? selectedAdditionalServiceIds[0] : null;
     }
 
@@ -645,14 +813,18 @@
       const isBoarding = selectedService && selectedService.category_name && selectedService.category_name.toLowerCase().includes('boarding');
 
       if (!isBoarding) {
+        $('#single_time_slot_wrapper').removeClass('hidden');
+        $('#additional_service_time_slots_container').addClass('hidden').empty();
         $('#time_slot_group').removeClass('hidden');
         $('#time_slot_group label').text('Start Time - End Time*');
         return;
       }
 
-      const additionalServiceId = getSelectedAdditionalServiceForTimeSlot();
+      const selectedAdditionalServiceIds = collectSelectedAdditionalServiceIds();
 
-      if (!additionalServiceId) {
+      if (selectedAdditionalServiceIds.length === 0) {
+        $('#single_time_slot_wrapper').addClass('hidden');
+        $('#additional_service_time_slots_container').addClass('hidden').empty();
         $('#time_slot_group').addClass('hidden');
         $('#time_slot').empty().append('<option value="" hidden selected>Choose a time slot</option>');
         $('#time_slot').val('').trigger('change');
@@ -660,7 +832,34 @@
         return;
       }
 
+      const shouldUsePerServiceTimeSlots = getSelectedPetIds().length > 1;
+      if (!shouldUsePerServiceTimeSlots) {
+        const additionalServiceId = getSelectedAdditionalServiceForTimeSlot();
+        const petId = getPrimaryPetId();
+        const boardingEndDateTime = $('#boarding_end_datetime').val();
+        const pickupDate = boardingEndDateTime ? boardingEndDateTime.split('T')[0] : '';
+        const pickupTime = boardingEndDateTime ? boardingEndDateTime.split('T')[1] : '';
+
+        $('#single_time_slot_wrapper').removeClass('hidden');
+        $('#additional_service_time_slots_container').addClass('hidden').empty();
+        $('#time_slot_group').removeClass('hidden');
+        $('#time_slot_group label').text('Start Time - End Time*');
+
+        if (!additionalServiceId || !petId || !pickupDate || !pickupTime) {
+          $('#time_slot').empty().append('<option value="" hidden selected>Select pet and pick up time first</option>');
+          $('#time_slot').val('').trigger('change');
+          $('#time_slot_data').val('');
+          return;
+        }
+
+        populateTimeSlots(additionalServiceId, pickupDate, petId, pickupTime, true);
+        return;
+      }
+
+      $('#single_time_slot_wrapper').addClass('hidden');
       $('#time_slot_group').removeClass('hidden');
+      $('#time_slot_group label').text('Additional Service Time Slots*');
+      renderAdditionalServiceTimeSlotSelectors();
     }
 
     function refreshAdditionalServiceTimeSlotsIfNeeded() {
@@ -674,24 +873,181 @@
         return;
       }
 
-      const additionalServiceId = getSelectedAdditionalServiceForTimeSlot();
-      if (!additionalServiceId) {
+      if (getSelectedPetIds().length <= 1) {
+        const additionalServiceId = getSelectedAdditionalServiceForTimeSlot();
+        const petId = getPrimaryPetId();
+        const boardingEndDateTime = $('#boarding_end_datetime').val();
+        const pickupDate = boardingEndDateTime ? boardingEndDateTime.split('T')[0] : '';
+        const pickupTime = boardingEndDateTime ? boardingEndDateTime.split('T')[1] : '';
+
+        if (!additionalServiceId || !petId || !pickupDate || !pickupTime) {
+          return;
+        }
+
+        populateTimeSlots(additionalServiceId, pickupDate, petId, pickupTime, true);
         return;
       }
 
-      const petId = getPrimaryPetId();
+      renderAdditionalServiceTimeSlotSelectors();
+    }
+
+    function getAdditionalServiceTimeSlotSelections() {
+      return Object.assign({}, window.selectedAdditionalServiceTimeslotsByPair || {});
+    }
+
+    function getSelectedAdditionalServicePairsByPet() {
+      const selectedPets = getSelectedPetDetails();
+      const perPetPayload = getPerPetAdditionalServicesPayload();
+      const pairs = [];
+
+      selectedPets.forEach(function(pet) {
+        const petId = String(pet.id);
+        const serviceIds = (perPetPayload[petId] || []).map(function(serviceId) {
+          return String(serviceId);
+        });
+
+        serviceIds.forEach(function(serviceId) {
+          if (!serviceId) {
+            return;
+          }
+
+          pairs.push({
+            petId: petId,
+            petName: pet.name,
+            serviceId: serviceId,
+            pairKey: petId + '_' + serviceId,
+          });
+        });
+      });
+
+      return pairs;
+    }
+
+    function hasMissingAdditionalServiceTimeSlots() {
+      const selectedAdditionalServiceIds = collectSelectedAdditionalServiceIds();
+      if (selectedAdditionalServiceIds.length === 0) {
+        return false;
+      }
+
+      if (getSelectedPetIds().length <= 1) {
+        return !$('#time_slot').val();
+      }
+
+      const selectedPairs = getSelectedAdditionalServicePairsByPet();
+      if (selectedPairs.length === 0) {
+        return false;
+      }
+
+      const slotSelections = getAdditionalServiceTimeSlotSelections();
+      return selectedPairs.some(function(pair) {
+        return !slotSelections[pair.pairKey];
+      });
+    }
+
+    function renderAdditionalServiceTimeSlotSelectors() {
+      const selectedPairs = getSelectedAdditionalServicePairsByPet();
       const boardingEndDateTime = $('#boarding_end_datetime').val();
       const pickupDate = boardingEndDateTime ? boardingEndDateTime.split('T')[0] : '';
       const pickupTime = boardingEndDateTime ? boardingEndDateTime.split('T')[1] : '';
+      const previousSelections = getAdditionalServiceTimeSlotSelections();
 
-      if (!petId || !pickupDate || !pickupTime) {
-        $('#time_slot').empty().append('<option value="" hidden selected>Select pet and pick up time first</option>');
-        $('#time_slot').val('').trigger('change');
-        $('#time_slot_data').val('');
+      const $container = $('#additional_service_time_slots_container');
+      $container.empty();
+
+      pruneAdditionalServiceTimeSlotState();
+
+      if (selectedPairs.length === 0) {
+        $container.addClass('hidden');
         return;
       }
 
-      populateTimeSlots(additionalServiceId, pickupDate, petId, pickupTime, true);
+      selectedPairs.forEach(function(pair) {
+        const service = window.additionalServicesData.find(function(item) {
+          return String(item.id) === String(pair.serviceId);
+        });
+
+        const serviceName = service ? service.name : 'Additional Service';
+        const selectId = 'additional_service_time_slot_' + pair.petId + '_' + pair.serviceId;
+
+        $container.append(`
+          <div class="space-y-2 rounded-box border border-base-300 p-3">
+            <label class="fieldset-label" for="${selectId}">${pair.petName} - ${serviceName}*</label>
+            <select class="select w-full additional-service-time-slot-select" id="${selectId}" name="additional_service_time_slots_by_pet[${pair.petId}][${pair.serviceId}]" data-service-id="${pair.serviceId}" data-pair-key="${pair.pairKey}" data-pet-id="${pair.petId}">
+              <option value="" hidden selected>Choose a time slot</option>
+            </select>
+          </div>
+        `);
+      });
+
+      $container.removeClass('hidden');
+
+      if (!pickupDate || !pickupTime) {
+        $('.additional-service-time-slot-select').each(function() {
+          $(this).empty().append('<option value="" hidden selected>Select pet and pick up time first</option>');
+        });
+        return;
+      }
+
+      $('.additional-service-time-slot-select').each(function() {
+        const $select = $(this);
+        const serviceId = String($select.data('service-id'));
+        const petId = String($select.data('pet-id'));
+        const pairKey = String($select.data('pair-key'));
+        populateAdditionalServiceTimeSlotOptions($select, serviceId, pickupDate, petId, pickupTime, previousSelections[pairKey] || '');
+      });
+
+      $('.additional-service-time-slot-select').off('change').on('change', function() {
+        const pairKey = String($(this).data('pair-key') || '');
+        if (!pairKey) {
+          return;
+        }
+
+        window.selectedAdditionalServiceTimeslotsByPair[pairKey] = String($(this).val() || '');
+      });
+    }
+
+    function populateAdditionalServiceTimeSlotOptions($select, serviceId, date, petId, pickupTime, selectedSlotId = '') {
+      $select.empty().append('<option value="" hidden selected>Choose a time slot</option>');
+
+      $.ajax({
+        url: '{{ route("get-appointment-timeslots") }}',
+        method: 'POST',
+        data: {
+          service_id: serviceId,
+          date: date,
+          pet_id: petId,
+          pickup_time: pickupTime,
+          is_boarding_additional_service: 1
+        },
+        headers: {
+          'X-CSRF-TOKEN': '{{ csrf_token() }}'
+        },
+        dataType: 'json',
+        success: function(timeSlots) {
+          $select.empty().append('<option value="" hidden selected>Choose a time slot</option>');
+
+          if (!timeSlots || timeSlots.length === 0) {
+            $select.append('<option value="" disabled>No available time slots</option>');
+            return;
+          }
+
+          timeSlots.forEach(function(slot) {
+            const slotValue = slot.is_virtual ? slot.start_time : (slot.id || slot.start_time);
+            const isSelected = selectedSlotId && String(slotValue) === String(selectedSlotId);
+            const disabled = slot.status !== 'available' ? 'disabled' : '';
+            const displayText = formatTimeToAMPM(slot.start_time) + ' - ' + formatTimeToAMPM(slot.end_time);
+            $select.append('<option value="' + slotValue + '" ' + disabled + (isSelected ? ' selected' : '') + '>' + displayText + '</option>');
+          });
+
+          const pairKey = String($select.data('pair-key') || '');
+          if (pairKey) {
+            window.selectedAdditionalServiceTimeslotsByPair[pairKey] = String($select.val() || '');
+          }
+        },
+        error: function() {
+          $select.empty().append('<option value="" disabled>Failed to load time slots</option>');
+        }
+      });
     }
 
     function populateTimeSlots(serviceId, date, petId, pickupTime = '', isBoardingAdditionalService = false) {
@@ -881,8 +1237,8 @@
         }
       }
 
-      if (isBoarding && scheduledAdditionalServiceId && !timeSlot) {
-        $('#alert_message').text('Please select a valid time slot for the additional service.');
+      if (isBoarding && scheduledAdditionalServiceId && hasMissingAdditionalServiceTimeSlots()) {
+        $('#alert_message').text('Please select a valid time slot for each additional service.');
         alert_modal.showModal();
         return;
       }
@@ -918,7 +1274,8 @@
         }
       }
 
-      const selectedAdditionalServices = $('#additional_services').val() || [];
+      const selectedAdditionalServices = collectSelectedAdditionalServiceIds();
+      const additionalServicesByPet = getPerPetAdditionalServicesPayload();
       const chauffeurSelected = hasSelectedChauffeurAdditionalService(selectedAdditionalServices);
 
       const submitAppointment = function() {
@@ -932,6 +1289,7 @@
             pet_ids: pet,
             service_id: service,
             additional_services: selectedAdditionalServices,
+            additional_services_by_pet: additionalServicesByPet,
           },
           headers: {
             'X-CSRF-TOKEN': '{{ csrf_token() }}'
