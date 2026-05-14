@@ -91,6 +91,7 @@
                 <label class="fieldset-label" for="status">Status*</label>
                 <select class="select w-full" name="status" id="status">
                   <option value="Available" {{ old('status', 'Available') === 'Available' ? 'selected' : '' }}>Available</option>
+                  <option value="Out of Service" {{ old('status', 'Out of Service') === 'Out of Service' ? 'selected' : '' }}>Out of Service</option>
                   <option value="Blocked" {{ old('status') === 'Blocked' ? 'selected' : '' }}>Blocked</option>
                   <option value="Maintenance" {{ old('status') === 'Maintenance' ? 'selected' : '' }}>Maintenance</option>
                 </select>
