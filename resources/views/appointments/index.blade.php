@@ -93,8 +93,9 @@
               $pickupDate = \Carbon\Carbon::parse($appointment->end_date);
               $stayDays = $checkInDate->copy()->startOfDay()->diffInDays($pickupDate->copy()->startOfDay()) + 1;
               $totalMeals = $stayDays * 2;
+              $hasConflict = isAssignmentConflict($appointment);
             @endphp
-            <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap">
+            <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap {{ $hasConflict ? 'assignment-conflict-row' : '' }}">
               <td>{{ $loop->iteration }}</td>
               <td>{{ $appointment->customer->profile->first_name }} {{ $appointment->customer->profile->last_name }}</td>
               <td>
@@ -117,10 +118,26 @@
                 </div>
               </td>
               <td>
-                {{ optional($appointment->catRoom)->name ?? $roomByKennel->get((string) $appointment->kennel_id, '—') }}
+                <div class="flex items-center gap-2">
+                  <span>{{ optional($appointment->catRoom)->name ?? $roomByKennel->get((string) $appointment->kennel_id, '—') }}</span>
+                  @if ($hasConflict)
+                    <span class="assignment-conflict-badge">
+                      <span class="iconify lucide--alert-circle size-3"></span>
+                      Conflict
+                    </span>
+                  @endif
+                </div>
               </td>
               <td>
-                {{ optional($appointment->kennel)->name ?? '—' }}
+                <div class="flex items-center gap-2">
+                  <span>{{ optional($appointment->kennel)->name ?? '—' }}</span>
+                  @if ($hasConflict)
+                    <span class="assignment-conflict-badge">
+                      <span class="iconify lucide--alert-circle size-3"></span>
+                      Over capacity
+                    </span>
+                  @endif
+                </div>
               </td>
               <td>{{ $appointment->service->name }}</td>
               <td>{{ $appointment->staff_id ? ($appointment->staff->profile ? $appointment->staff->profile->first_name : $appointment->staff->name) : 'Unassigned' }}</td>

@@ -294,6 +294,7 @@ Route::middleware(['auth'])->group(function () {
 
         Route::get('/appointment/view/calendar', 'viewCalendar')->name('view-appointment-calendar')->middleware('ensure.permission:3,can_read');
         Route::post('/appointment/validate', 'getValidationInfo')->name('get-validation-info')->middleware('ensure.permission:3,can_read');
+        Route::post('/appointment/validate-assignment', 'validateAssignment')->name('validate-assignment')->middleware('ensure.permission:3,can_read');
     });
 
     Route::controller(ArchiveController::class)->group(function () {

@@ -246,6 +246,7 @@ class PreCheckinController extends Controller
 
             $normalized[(string) $petId] = [
                 'other_items_description' => $this->nullableTrim($petData['other_items_description'] ?? null),
+                'flea_tick' => filter_var($petData['flea_tick'] ?? false, FILTER_VALIDATE_BOOL),
                 'dry_food_list' => $dryFoodList,
                 'wet_food_list' => $wetFoodList,
                 'meds_list' => $medsList,

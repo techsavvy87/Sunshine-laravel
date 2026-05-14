@@ -76,20 +76,27 @@ class RoomController extends Controller
                 })->filter()->unique('id')->values();
             });
 
-        $rooms->getCollection()->transform(function ($room) use ($kennelLookup, $activeBoardingAppointmentsByKennel, $activeBoardingAppointmentsByRoom) {
+        $rooms->getCollection()->transform(function ($room) use ($kennelLookup, $activeBoardingAppointmentsByKennel, $activeBoardingAppointmentsByRoom, $activeBoardingAppointments) {
             $room->assigned_kennels = collect($room->kennel_id_array)
                 ->map(fn ($id) => $kennelLookup->get((int) $id))
                 ->filter()
                 ->values();
 
             $room->assigned_kennel_names = $room->assigned_kennels->pluck('name')->implode(', ');
-            $room->current_room_pets = $activeBoardingAppointmentsByRoom->get((int) $room->id, collect());
-            $room->kennel_pet_assignments = $room->assigned_kennels->map(function ($kennel) use ($activeBoardingAppointmentsByKennel) {
+            $isSpaceRoom = in_array('space', $room->room_type_array, true);
+            $room->current_room_pets = $isSpaceRoom
+                ? $activeBoardingAppointmentsByRoom->get((int) $room->id, collect())
+                : collect();
+            $room->kennel_pet_assignments = $room->assigned_kennels->map(function ($kennel) use ($activeBoardingAppointmentsByKennel, $activeBoardingAppointments) {
                 $pets = $activeBoardingAppointmentsByKennel->get((int) $kennel->id, collect());
+                $appointments = $activeBoardingAppointments
+                    ->where('kennel_id', $kennel->id)
+                    ->values();
 
                 return (object) [
                     'kennel' => $kennel,
                     'pets' => $pets,
+                    'appointments' => $appointments,
                 ];
             })->values();
 
@@ -185,7 +192,11 @@ class RoomController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
-            'type' => 'required|in:dog,cat,other',
+            'room_type' => 'required|in:standard,space',
+            'space_option' => 'nullable|in:restrict,multi',
+            'restrict_count' => 'nullable|integer|min:1',
+            'pet_type_labels' => 'nullable|array',
+            'pet_type_labels.*' => 'in:dog,cat',
             'status' => 'required|in:Available,Blocked,Maintenance',
             'kennel_ids' => 'nullable|array',
             'kennel_ids.*' => 'integer|exists:kennels,id',
@@ -201,12 +212,37 @@ class RoomController extends Controller
             ]);
         }
 
+        $roomType = strtolower(trim((string) $request->input('room_type', 'standard')));
+        $isSpace = $roomType === 'space';
+        $isRestrict = $isSpace && $request->input('space_option') === 'restrict';
+
+        if ($isSpace && !$request->filled('space_option')) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Please choose Restrict or Multi when Space is selected.'
+            ]);
+        }
+
+        if ($isRestrict && !$request->filled('restrict_count')) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Please enter Restrict count when Restrict is selected.'
+            ]);
+        }
+
         $room = new Room();
         $room->name = $normalizedName;
         $room->description = $request->description;
-        $room->type = $request->type;
+        $room->room_types = $roomType;
+        $room->space_option = $isSpace ? $request->space_option : null;
+        $room->restrict_count = $isRestrict ? (int) $request->restrict_count : null;
+        $room->pet_type_labels = $isSpace
+            ? $this->normalizeStringList($request->input('pet_type_labels', []), ['dog', 'cat'])
+            : null;
         $room->status = $request->status;
-        $room->kennel_ids = $this->normalizeKennelIds($request->input('kennel_ids', []));
+        $room->kennel_ids = $roomType === 'standard'
+            ? $this->normalizeKennelIds($request->input('kennel_ids', []))
+            : null;
 
         if ($request->filled('temp_file')) {
             $tempFile = $request->temp_file;
@@ -239,7 +275,11 @@ class RoomController extends Controller
             'id' => 'required|exists:rooms,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
-            'type' => 'required|in:dog,cat,other',
+            'room_type' => 'required|in:standard,space',
+            'space_option' => 'nullable|in:restrict,multi',
+            'restrict_count' => 'nullable|integer|min:1',
+            'pet_type_labels' => 'nullable|array',
+            'pet_type_labels.*' => 'in:dog,cat',
             'status' => 'required|in:Available,Blocked,Maintenance',
             'kennel_ids' => 'nullable|array',
             'kennel_ids.*' => 'integer|exists:kennels,id',
@@ -259,12 +299,37 @@ class RoomController extends Controller
             ]);
         }
 
+        $roomType = strtolower(trim((string) $request->input('room_type', 'standard')));
+        $isSpace = $roomType === 'space';
+        $isRestrict = $isSpace && $request->input('space_option') === 'restrict';
+
+        if ($isSpace && !$request->filled('space_option')) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Please choose Restrict or Multi when Space is selected.'
+            ]);
+        }
+
+        if ($isRestrict && !$request->filled('restrict_count')) {
+            return redirect()->back()->withInput()->with([
+                'status' => 'fail',
+                'message' => 'Please enter Restrict count when Restrict is selected.'
+            ]);
+        }
+
         $room = Room::findOrFail($request->id);
         $room->name = $normalizedName;
         $room->description = $request->description;
-        $room->type = $request->type;
+        $room->room_types = $roomType;
+        $room->space_option = $isSpace ? $request->space_option : null;
+        $room->restrict_count = $isRestrict ? (int) $request->restrict_count : null;
+        $room->pet_type_labels = $isSpace
+            ? $this->normalizeStringList($request->input('pet_type_labels', []), ['dog', 'cat'])
+            : null;
         $room->status = $request->status;
-        $room->kennel_ids = $this->normalizeKennelIds($request->input('kennel_ids', []));
+        $room->kennel_ids = $roomType === 'standard'
+            ? $this->normalizeKennelIds($request->input('kennel_ids', []))
+            : null;
 
         switch ($request->img_action) {
             case 'change':
@@ -344,5 +409,18 @@ class RoomController extends Controller
         $existingIds = Kennel::whereIn('id', $ids)->pluck('id')->all();
 
         return empty($existingIds) ? null : implode(',', $existingIds);
+    }
+
+    private function normalizeStringList($values, array $allowed): ?string
+    {
+        $allowedMap = array_fill_keys($allowed, true);
+
+        $normalized = collect(is_array($values) ? $values : explode(',', (string) $values))
+            ->map(fn ($value) => strtolower(trim((string) $value)))
+            ->filter(fn ($value) => isset($allowedMap[$value]))
+            ->unique()
+            ->values();
+
+        return $normalized->isEmpty() ? null : $normalized->implode(',');
     }
 }

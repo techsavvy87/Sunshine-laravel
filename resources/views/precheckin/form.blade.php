@@ -43,6 +43,7 @@
     $allFlows = is_array($flows ?? null) ? $flows : [];
     $petSpecificFlows = isset($allFlows['pet_specific']) && is_array($allFlows['pet_specific']) ? $allFlows['pet_specific'] : [];
     $isFamilyCheckin = $pets->count() > 1;
+    $boardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
   @endphp
   <main class="max-w-7xl mx-auto p-4 md:p-6">
     <div class="card bg-base-100">
@@ -129,6 +130,7 @@
                   $petFlow = is_array($petFlow) ? $petFlow : [];
                   $effectivePetFlow = array_merge($allFlows, $petFlow);
                   $petOtherItemsDescription = old('pet_specific.' . $petIdKey . '.other_items_description', $effectivePetFlow['other_items_description'] ?? '');
+                  $petFleaTickChecked = old('pet_specific.' . $petIdKey . '.flea_tick', $effectivePetFlow['flea_tick'] ?? false);
 
                   $dryFoodRows = [];
                   if (isset($effectivePetFlow['dry_food_list']) && is_array($effectivePetFlow['dry_food_list']) && count($effectivePetFlow['dry_food_list']) > 0) {
@@ -196,6 +198,10 @@
                   <div>
                     <p class="font-semibold mb-2 text-base">Pet Information</p>
                     <div class="space-y-3 ms-2">
+                      <label class="label cursor-pointer justify-start gap-2">
+                        <input type="checkbox" class="checkbox checkbox-sm boarding-flea-tick-checkbox" name="pet_specific[{{ $petIdKey }}][flea_tick]" value="1" data-pet-id="{{ $pet->id }}" {{ $petFleaTickChecked ? 'checked' : '' }} />
+                        <span class="label-text">Flea/Tick</span>
+                      </label>
                       <div>
                         <p class="font-medium mb-2">Items:</p>
                         <div class="mt-2">
@@ -650,6 +656,50 @@
         }
       });
     }
+
+    function getBoardingFleaTickCheckedCount() {
+      return document.querySelectorAll('.boarding-flea-tick-checkbox:checked').length;
+    }
+
+    const boardingTaxRate = parseFloat(@json((float) config('billing.state_tax_rate', 7)));
+    const boardingDiscountAmount = parseFloat(@json((float) ($boardingPricing['family_discount_amount'] ?? 0)));
+    const boardingFleaTickUnitAmount = 50;
+    const boardingEstimatedPriceInput = document.getElementById('estimated_price');
+    const boardingInitialCheckedCount = getBoardingFleaTickCheckedCount();
+    const boardingBaseGrossBeforeFlea = (() => {
+      if (!boardingEstimatedPriceInput) {
+        return 0;
+      }
+
+      const currentPrice = parseFloat(boardingEstimatedPriceInput.value);
+      if (Number.isNaN(currentPrice)) {
+        return 0;
+      }
+
+      const taxFactor = 1 + (boardingTaxRate / 100);
+      return taxFactor > 0
+        ? ((currentPrice / taxFactor) + boardingDiscountAmount - (boardingInitialCheckedCount * boardingFleaTickUnitAmount))
+        : (currentPrice + boardingDiscountAmount - (boardingInitialCheckedCount * boardingFleaTickUnitAmount));
+    })();
+
+    function updateBoardingEstimatedPriceFromFleaTick() {
+      if (!boardingEstimatedPriceInput) {
+        return;
+      }
+
+      const checkedCount = getBoardingFleaTickCheckedCount();
+      const feeTotal = checkedCount * boardingFleaTickUnitAmount;
+      const taxFactor = 1 + (boardingTaxRate / 100);
+      const updatedPrice = Math.max(0, (boardingBaseGrossBeforeFlea + feeTotal - boardingDiscountAmount) * taxFactor);
+
+      boardingEstimatedPriceInput.value = updatedPrice.toFixed(2);
+    }
+
+    document.addEventListener('change', function(event) {
+      if (event.target && event.target.classList && event.target.classList.contains('boarding-flea-tick-checkbox')) {
+        updateBoardingEstimatedPriceFromFleaTick();
+      }
+    });
 
     function initializeBoardingSignaturePad() {
       const canvas = document.getElementById('boarding_signature_pad');

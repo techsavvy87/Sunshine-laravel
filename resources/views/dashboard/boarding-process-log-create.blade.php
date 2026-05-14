@@ -349,9 +349,14 @@
   let lastLunchCheckinData = null;
   let lastRestCheckinData = null;
   let checkinRestMetaByAppointmentId = {};
+  let checkinFleaTickByWorkflowId = {};
   let isLoadingCheckinRestMeta = false;
   let yesterdayNextDayPetIds = [];
   let yesterdayReportsPmIssues = {};
+
+  function isTruthyBoardingValue(value) {
+    return value === true || value === 'true' || value === 1 || value === '1';
+  }
 
   function getWorkflowItemId(item) {
     if (!item) return null;
@@ -386,6 +391,9 @@
         is_assigned: restRequired || scheduledRest,
         rest_note: ((item.rest_note || '') + '').trim()
       };
+
+      const fleaTick = item && item.checkin && item.checkin.flows ? item.checkin.flows.flea_tick : null;
+      checkinFleaTickByWorkflowId[String(workflowId)] = isTruthyBoardingValue(fleaTick);
     });
   }
 
@@ -726,11 +734,27 @@
     $('#staff_sign_off_container').hide();
 
     if (currentProcessItem === 'check_pet') {
-      renderCheckPetForm();
       $('#check_pet_form_container').show();
-      loadStaffSignOff();
-      $('#save_details_btn_container').show();
-      $('#staff_sign_off_container').show();
+      $('#check_pet_tbody').html('<tr><td colspan="12" class="text-center p-4">Loading...</td></tr>');
+      $.ajax({
+        url: '{{ route("boarding-process-log-get-checkin-data") }}',
+        method: 'POST',
+        data: { _token: '{{ csrf_token() }}', appointment_ids: getSelectedRequestAppointmentIds() },
+        success: function(response) {
+          const checkinData = response.success && response.data ? response.data : [];
+          updateCheckinRestMetaFromData(checkinData);
+          renderCheckPetForm();
+          loadStaffSignOff();
+          $('#save_details_btn_container').show();
+          $('#staff_sign_off_container').show();
+        },
+        error: function() {
+          renderCheckPetForm();
+          loadStaffSignOff();
+          $('#save_details_btn_container').show();
+          $('#staff_sign_off_container').show();
+        }
+      });
       return;
     }
 
@@ -1007,12 +1031,14 @@
     // Get saved check data
     const currentData = workflowData[currentProcessItem] || {};
     const savedCheckData = currentData.check_data || {};
+    const savedFleaTickData = currentData.flea_tick_data || {};
     
     // Build table header
     let headerHtml = '<tr><th style="min-width: 200px;">Pet Name</th><th style="min-width: 200px;">Customer</th>';
     bodyParts.forEach(part => {
       headerHtml += `<th style="text-align: center; min-width: 90px;">${part}</th>`;
     });
+    headerHtml += '<th style="text-align: center; min-width: 130px;">Flea/Tick</th>';
     headerHtml += '</tr>';
     $('#check_pet_thead').html(headerHtml);
     
@@ -1031,6 +1057,9 @@
         : '{{ asset("images/default-user-avatar.png") }}';
       
       const savedPetData = savedCheckData[appointmentId] || {};
+      const savedFleaTick = isTruthyBoardingValue(savedFleaTickData[appointmentId]);
+      const checkinFleaTick = checkinFleaTickByWorkflowId[String(appointmentId)] === true;
+      const fleaTickChecked = savedFleaTick || checkinFleaTick;
       
       bodyHtml += `<tr class="hover:bg-base-200" data-appointment-id="${appointmentId}">`;
       
@@ -1076,6 +1105,16 @@
           </td>
         `;
       });
+
+      bodyHtml += `
+        <td style="text-align: center;">
+          <label class="label cursor-pointer justify-center gap-2">
+            <input class="checkbox checkbox-sm flea-tick-checkbox" type="checkbox" data-appointment-id="${appointmentId}" ${fleaTickChecked ? 'checked' : ''} />
+            <span class="label-text text-xs">Flea/Tick</span>
+          </label>
+          ${checkinFleaTick ? '<div class="text-[10px] text-base-content/60">from check-in</div>' : ''}
+        </td>
+      `;
       
       bodyHtml += '</tr>';
     });
@@ -2532,6 +2571,7 @@
 
     if (currentProcessItem === 'check_pet') {
       const checkPetData = {};
+      const fleaTickData = {};
       selectedAppointmentIds.forEach(appointmentId => {
         const pet = appointmentToPetMap[appointmentId];
         if (!pet) return;
@@ -2549,6 +2589,8 @@
             status: selectedValue || ''
           };
         });
+
+        fleaTickData[appointmentId] = $(`.flea-tick-checkbox[data-appointment-id="${appointmentId}"]`).is(':checked');
       });
       
       if (!workflowData[currentProcessItem]) {
@@ -2557,6 +2599,7 @@
       workflowData[currentProcessItem].selected_pet_ids = selectedAppointmentIds;
       workflowData[currentProcessItem].process_type = currentProcessItem;
       workflowData[currentProcessItem].check_data = checkPetData;
+      workflowData[currentProcessItem].flea_tick_data = fleaTickData;
     } else if (currentProcessItem === 'treatment_plan') {
       // Get check_pet data to filter pets with issues
       const checkPetData = workflowData['check_pet'] || {};

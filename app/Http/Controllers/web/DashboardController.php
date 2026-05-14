@@ -27,6 +27,120 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class DashboardController extends Controller
 {
+    private function syncBoardingFleaTickInvoiceItem(Appointment $appointment, float $fleaTickFee): void
+    {
+        $invoice = Invoice::where('appointment_id', $appointment->id)->first();
+        if (!$invoice) {
+            return;
+        }
+
+        $fleaItems = InvoiceItem::where('invoice_id', $invoice->id)
+            ->where('item_type', 'service')
+            ->where('item_name', 'Flea/Tick Fee')
+            ->get();
+
+        if ($fleaTickFee > 0) {
+            $existingItem = $fleaItems->first();
+            if ($existingItem) {
+                $existingItem->price = $fleaTickFee;
+                $existingItem->save();
+
+                if ($fleaItems->count() > 1) {
+                    InvoiceItem::whereIn('id', $fleaItems->skip(1)->pluck('id')->all())->delete();
+                }
+            } else {
+                InvoiceItem::create([
+                    'invoice_id' => $invoice->id,
+                    'item_name' => 'Flea/Tick Fee',
+                    'price' => $fleaTickFee,
+                    'item_type' => 'service',
+                ]);
+            }
+        } else {
+            if ($fleaItems->isNotEmpty()) {
+                InvoiceItem::whereIn('id', $fleaItems->pluck('id')->all())->delete();
+            }
+        }
+    }
+
+    private function syncBoardingFleaTickFromProcessFlows(Appointment $appointment, array $processFlows): void
+    {
+        if (!isBoardingService($appointment->service)) {
+            return;
+        }
+
+        $fleaTickData = $processFlows['check_pet']['flea_tick_data'] ?? [];
+        if (!is_array($fleaTickData) || empty($fleaTickData)) {
+            return;
+        }
+
+        $checkin = Checkin::where('appointment_id', $appointment->id)->first();
+        if (!$checkin) {
+            $checkin = new Checkin();
+            $checkin->appointment_id = $appointment->id;
+        }
+
+        $existingCheckinFlows = [];
+        if (!empty($checkin->flows)) {
+            $decodedExistingCheckinFlows = json_decode($checkin->flows, true);
+            $existingCheckinFlows = is_array($decodedExistingCheckinFlows) ? $decodedExistingCheckinFlows : [];
+        }
+
+        $updatedCheckinFlows = $existingCheckinFlows;
+        $petSpecific = isset($updatedCheckinFlows['pet_specific']) && is_array($updatedCheckinFlows['pet_specific'])
+            ? $updatedCheckinFlows['pet_specific']
+            : [];
+
+        $pets = $appointment->familyPets ?? collect();
+        if ($pets->isEmpty() && $appointment->pet) {
+            $pets = collect([$appointment->pet]);
+        }
+        if ($pets->isEmpty()) {
+            return;
+        }
+
+        $isFamilyAppointment = $pets->count() > 1;
+
+        foreach ($pets as $pet) {
+            if (!$pet) {
+                continue;
+            }
+
+            $petIdKey = (string) $pet->id;
+            $workflowKey = $isFamilyAppointment ? $petIdKey : (string) $appointment->id;
+
+            $workflowFleaTick = $fleaTickData[$workflowKey] ?? ($fleaTickData[(int) $workflowKey] ?? null);
+            if ($workflowFleaTick === null) {
+                continue;
+            }
+
+            $existingPetFlows = $petSpecific[$petIdKey] ?? ($petSpecific[$pet->id] ?? []);
+            if (!is_array($existingPetFlows)) {
+                $existingPetFlows = [];
+            }
+
+            $existingValue = $existingPetFlows['flea_tick'] ?? ($updatedCheckinFlows['flea_tick'] ?? null);
+            $finalFleaTick = boardingValueIsTruthy($existingValue) || boardingValueIsTruthy($workflowFleaTick);
+
+            $existingPetFlows['flea_tick'] = $finalFleaTick;
+            $petSpecific[$petIdKey] = $existingPetFlows;
+        }
+
+        $updatedCheckinFlows['pet_specific'] = $petSpecific;
+
+        $previousFleaTickAmount = floatval(getBoardingFleaTickBreakdown($appointment, $existingCheckinFlows)['amount'] ?? 0);
+        $currentFleaTickAmount = floatval(getBoardingFleaTickBreakdown($appointment, $updatedCheckinFlows)['amount'] ?? 0);
+
+        $checkin->flows = json_encode($updatedCheckinFlows);
+        $checkin->save();
+
+        $baseEstimatedPrice = max(0, floatval($appointment->estimated_price ?? 0) - $previousFleaTickAmount);
+        $appointment->estimated_price = round($baseEstimatedPrice + $currentFleaTickAmount, 2);
+        $appointment->save();
+
+        $this->syncBoardingFleaTickInvoiceItem($appointment, $currentFleaTickAmount);
+    }
+
     public function index(Request $request)
     {
         $active = 'dashboard';
@@ -34,17 +148,8 @@ class DashboardController extends Controller
         $today = Carbon::today();
         $yesterday = Carbon::yesterday();
         
-        $todayRevenue = InvoiceItem::whereHas('invoice', function ($query) use ($today) {
-                $query->where('status', 'paid')
-                    ->whereDate('paid_at', $today);
-            })
-            ->sum('price');
-        
-        $yesterdayRevenue = InvoiceItem::whereHas('invoice', function ($query) use ($yesterday) {
-                $query->where('status', 'paid')
-                    ->whereDate('paid_at', $yesterday);
-            })
-            ->sum('price');
+        $todayRevenue = $this->calculatePaidRevenueForRange($today, $today);
+        $yesterdayRevenue = $this->calculatePaidRevenueForRange($yesterday, $yesterday);
         
         $percentageChange = 0;
         if ($yesterdayRevenue > 0) {
@@ -122,10 +227,25 @@ class DashboardController extends Controller
             ->get();
         
         foreach ($recentAppointments as $appointment) {
+            $isBoarding = isBoardingService($appointment->service);
+            $stateTaxRate = $isBoarding ? floatval(config('billing.state_tax_rate', 7)) : 0;
+
             if ($appointment->invoice && $appointment->invoice->items && $appointment->invoice->items->count() > 0) {
-                $appointment->total_price = $appointment->invoice->items->sum('price');
+                $itemsSubtotal = floatval($appointment->invoice->items->sum('price'));
+                $discountAmount = floatval($appointment->invoice->discount_amount ?? 0);
+                $subtotalAfterDiscount = max(0, $itemsSubtotal - $discountAmount);
+                $appointment->total_price = $subtotalAfterDiscount + ($subtotalAfterDiscount * ($stateTaxRate / 100));
             } else {
-                $appointment->total_price = $appointment->estimated_price ?? 0;
+                $baseEstimatedPrice = floatval($appointment->estimated_price ?? 0);
+
+                if ($isBoarding) {
+                    $boardingPricing = getBoardingPricingBreakdown($appointment);
+                    $discountAmount = floatval($boardingPricing['family_discount_amount'] ?? 0);
+                    $subtotalAfterDiscount = max(0, $baseEstimatedPrice - $discountAmount);
+                    $appointment->total_price = $subtotalAfterDiscount + ($subtotalAfterDiscount * ($stateTaxRate / 100));
+                } else {
+                    $appointment->total_price = $baseEstimatedPrice;
+                }
             }
 
             $familyPets = $appointment->familyPets ?? collect();
@@ -475,6 +595,57 @@ class DashboardController extends Controller
 
         return view('dashboard.completed', compact('completedAppointments'));
     }
+
+    private function calculateFinalPaidInvoiceAmount(Invoice $invoice): float
+    {
+        $itemsSubtotal = floatval($invoice->items->sum('price'));
+        $discountAmount = floatval($invoice->discount_amount ?? 0);
+        $subtotalAfterDiscount = max(0, $itemsSubtotal - $discountAmount);
+
+        $appointmentService = optional(optional($invoice->appointment)->service);
+        $stateTaxRate = isBoardingService($appointmentService)
+            ? floatval(config('billing.state_tax_rate', 7))
+            : 0;
+
+        return $subtotalAfterDiscount + ($subtotalAfterDiscount * ($stateTaxRate / 100));
+    }
+
+    private function calculatePaidRevenueForRange(Carbon $startDate, Carbon $endDate): float
+    {
+        $rangeStart = $startDate->copy()->startOfDay();
+        $rangeEnd = $endDate->copy()->endOfDay();
+
+        // Primary source of truth: actual recorded payments.
+        $transactions = Transaction::query()
+            ->whereNotNull('invoice_id')
+            ->whereBetween('tran_date', [$rangeStart, $rangeEnd])
+            ->get();
+
+        $transactionRevenue = floatval($transactions->sum(function (Transaction $transaction) {
+            return floatval($transaction->amount ?? 0);
+        }));
+
+        // Fallback for legacy paid invoices that do not have payment transactions.
+        $invoiceQuery = Invoice::with(['items', 'appointment.service'])
+            ->where('status', 'paid')
+            ->whereBetween('paid_at', [$rangeStart, $rangeEnd]);
+
+        $transactionInvoiceIds = $transactions->pluck('invoice_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (!empty($transactionInvoiceIds)) {
+            $invoiceQuery->whereNotIn('id', $transactionInvoiceIds);
+        }
+
+        $legacyInvoiceRevenue = $invoiceQuery->get()->sum(function (Invoice $invoice) {
+            return $this->calculateFinalPaidInvoiceAmount($invoice);
+        });
+
+        return round($transactionRevenue + floatval($legacyInvoiceRevenue), 2);
+    }
     
     private function getRevenueStatistics($period = 'month')
     {
@@ -487,10 +658,7 @@ class DashboardController extends Controller
         if ($period === 'day') {
             for ($i = 6; $i >= 0; $i--) {
                 $date = $today->copy()->subDays($i);
-                $revenue = InvoiceItem::whereHas('invoice', function ($query) use ($date) {
-                    $query->where('status', 'paid')
-                        ->whereDate('paid_at', $date);
-                })->sum('price');
+                $revenue = $this->calculatePaidRevenueForRange($date, $date);
                 
                 $data[] = round($revenue, 2);
                 $categories[] = $date->format('M j');
@@ -499,19 +667,13 @@ class DashboardController extends Controller
             
             $previousStart = $today->copy()->subDays(13);
             $previousEnd = $today->copy()->subDays(7);
-            $previousPeriodRevenue = InvoiceItem::whereHas('invoice', function ($query) use ($previousStart, $previousEnd) {
-                $query->where('status', 'paid')
-                    ->whereBetween('paid_at', [$previousStart, $previousEnd]);
-            })->sum('price');
+            $previousPeriodRevenue = $this->calculatePaidRevenueForRange($previousStart, $previousEnd);
             
         } elseif ($period === 'week') {
             for ($i = 7; $i >= 0; $i--) {
                 $weekStart = $today->copy()->subWeeks($i)->startOfWeek();
                 $weekEnd = $weekStart->copy()->endOfWeek();
-                $revenue = InvoiceItem::whereHas('invoice', function ($query) use ($weekStart, $weekEnd) {
-                    $query->where('status', 'paid')
-                        ->whereBetween('paid_at', [$weekStart, $weekEnd]);
-                })->sum('price');
+                $revenue = $this->calculatePaidRevenueForRange($weekStart, $weekEnd);
                 
                 $data[] = round($revenue, 2);
                 $categories[] = $weekStart->format('M j');
@@ -520,19 +682,13 @@ class DashboardController extends Controller
             
             $previousStart = $today->copy()->subWeeks(15)->startOfWeek();
             $previousEnd = $today->copy()->subWeeks(8)->endOfWeek();
-            $previousPeriodRevenue = InvoiceItem::whereHas('invoice', function ($query) use ($previousStart, $previousEnd) {
-                $query->where('status', 'paid')
-                    ->whereBetween('paid_at', [$previousStart, $previousEnd]);
-            })->sum('price');
+            $previousPeriodRevenue = $this->calculatePaidRevenueForRange($previousStart, $previousEnd);
             
         } else {
             for ($i = 11; $i >= 0; $i--) {
                 $monthStart = $today->copy()->subMonths($i)->startOfMonth();
                 $monthEnd = $monthStart->copy()->endOfMonth();
-                $revenue = InvoiceItem::whereHas('invoice', function ($query) use ($monthStart, $monthEnd) {
-                    $query->where('status', 'paid')
-                        ->whereBetween('paid_at', [$monthStart, $monthEnd]);
-                })->sum('price');
+                $revenue = $this->calculatePaidRevenueForRange($monthStart, $monthEnd);
                 
                 $data[] = round($revenue, 2);
                 $categories[] = $monthStart->format('M Y');
@@ -541,10 +697,7 @@ class DashboardController extends Controller
             
             $previousStart = $today->copy()->subMonths(23)->startOfMonth();
             $previousEnd = $today->copy()->subMonths(12)->endOfMonth();
-            $previousPeriodRevenue = InvoiceItem::whereHas('invoice', function ($query) use ($previousStart, $previousEnd) {
-                $query->where('status', 'paid')
-                    ->whereBetween('paid_at', [$previousStart, $previousEnd]);
-            })->sum('price');
+            $previousPeriodRevenue = $this->calculatePaidRevenueForRange($previousStart, $previousEnd);
         }
         
         $percentageChange = 0;
@@ -795,9 +948,14 @@ class DashboardController extends Controller
                 'time' => $this->formatDashboardTime($appointment->start_time),
                 'sort_time' => $appointment->start_time,
             ];
-        })->sortBy(function (array $item) {
+        })
+        ->filter(function ($item) {
+            return is_array($item);
+        })
+        ->sortBy(function (array $item) {
             return $item['sort_time'] ?: '23:59:59';
-        })->values();
+        })
+        ->values();
     }
 
     private function extractDashboardTreatmentSelections(array $treatmentPlanData): array
@@ -1121,6 +1279,8 @@ class DashboardController extends Controller
                 $process->flows = json_encode($mergedFlows);
                 
                 $process->save();
+
+                $this->syncBoardingFleaTickFromProcessFlows($appointment, $mergedFlows);
                 $savedCount++;
             } catch (\Exception $e) {
                 $errors[] = "Error saving process for appointment ID {$appointmentId}: " . $e->getMessage();
@@ -1451,6 +1611,11 @@ class DashboardController extends Controller
                     $proc->pickup_time = $pickupTime;
                 }
                 $proc->save();
+
+                $appointment = Appointment::with(['service.category', 'pet'])->find($proc->appointment_id);
+                if ($appointment) {
+                    $this->syncBoardingFleaTickFromProcessFlows($appointment, $mergedFlows);
+                }
                 $updatedCount++;
             } catch (\Exception $e) {
                 $errors[] = "Error updating process ID {$proc->id}: " . $e->getMessage();

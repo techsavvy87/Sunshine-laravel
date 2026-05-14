@@ -44,6 +44,8 @@
   @include('layouts.alerts')
   <form action="{{ route('create-appointment') }}" method="POST" id="create_form">
     @csrf
+    <input type="hidden" name="allow_assignment_conflict" id="allow_assignment_conflict" value="0" />
+    <input type="hidden" name="assignment_conflict_info" id="assignment_conflict_info" value="" />
     <div class="card bg-base-100 shadow">
       <div class="card-body">
         <div class="fieldset mt-2 grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -81,7 +83,21 @@
             <label class="fieldset-label">Pick Up Date/Time*</label>
             <input type="datetime-local" class="input w-full" id="boarding_end_datetime" name="boarding_end_datetime" format="YYYY-MM-DD HH:mm" placeholder="Select drop off date/time" />
           </div>
-          <div class="space-y-2" id="kennel_group">
+          <div class="space-y-2" id="room_group">
+            <label class="fieldset-label" for="room">Assignment*</label>
+            <select class="select w-full" name="room" id="room">
+              <option value="" hidden selected>Choose a room</option>
+              @foreach($rooms as $room)
+                <option
+                  value="{{ $room->id }}"
+                  data-room-type="{{ implode(',', $room->room_type_array) }}"
+                  data-kennel-ids="{{ implode(',', $room->kennel_id_array) }}"
+                  data-restrict-count="{{ $room->restrict_count }}"
+                >{{ $room->name }}</option>
+              @endforeach
+            </select>
+          </div>
+          <div class="space-y-2 hidden" id="kennel_group">
             <label class="fieldset-label" for="kennel">Kennel*</label>
             <select class="select w-full" name="kennel" id="kennel">
               <option value="" hidden selected>Choose a kennel</option>
@@ -90,17 +106,6 @@
               @endforeach
             </select>
           </div>
-          <div class="space-y-2 hidden" id="room_group">
-            <label class="fieldset-label" for="room">Room*</label>
-            <select class="select w-full" name="room" id="room">
-              <option value="" hidden selected>Choose a room</option>
-              @foreach($rooms as $room)
-                <option value="{{ $room->id }}">{{ $room->name }}</option>
-              @endforeach
-            </select>
-          </div>
-        </div>
-        <div class="fieldset mt-3 grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div id="additional_services_group">
             <div class="space-y-2">
               <label class="fieldset-label" for="additional_services">Additional Services</label>
@@ -163,6 +168,29 @@
   </form>
 </dialog>
 
+<dialog id="assignment_modal" class="modal">
+  <div class="modal-box">
+    <div class="flex items-center justify-between text-lg font-medium">
+      Assignment Warning
+      <form method="dialog">
+        <button class="btn btn-sm btn-ghost btn-circle" aria-label="Close modal">
+          <span class="iconify lucide--x size-4"></span>
+        </button>
+      </form>
+    </div>
+    <p class="py-4" id="assignment_message"></p>
+    <div class="modal-action">
+      <form method="dialog">
+        <button class="btn btn-ghost btn-sm" onclick="changeAssignmentRoom()">Change Room</button>
+      </form>
+      <button id="continue_anyway_btn" class="btn btn-primary btn-sm btn-soft" onclick="continueWithAssignmentConflict()">Continue Anyway</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
+
 @endsection
 
 @section('page-js')
@@ -175,6 +203,17 @@
       window.initialKennels = [
         @foreach($kennels as $kennel)
           { id: '{{ $kennel->id }}', name: '{{ addslashes($kennel->name) }}' },
+        @endforeach
+      ];
+      window.initialRooms = [
+        @foreach($rooms as $room)
+          {
+            id: '{{ $room->id }}',
+            name: '{{ addslashes($room->name) }}',
+            room_types: '{{ addslashes(implode(',', $room->room_type_array)) }}',
+            kennel_ids: '{{ addslashes(implode(',', $room->kennel_id_array)) }}',
+            restrict_count: '{{ $room->restrict_count }}'
+          },
         @endforeach
       ];
 
@@ -341,6 +380,10 @@
         refreshAvailableKennels();
       });
 
+      $('#room').on('change', function() {
+        refreshAvailableKennels();
+      });
+
       $('#boarding_start_datetime, #boarding_end_datetime').on('change', function() {
         refreshAdditionalServiceTimeSlotsIfNeeded();
         refreshAvailableKennels();
@@ -422,36 +465,56 @@
       $kennel.val(selectedExists ? String(selectedKennelId) : '').trigger('change');
     }
 
+    function getSelectedRoomOption() {
+      return $('#room option:selected');
+    }
+
+    function getSelectedRoomType() {
+      const roomType = String(getSelectedRoomOption().data('room-type') || '').trim().toLowerCase();
+      return roomType.includes('space') ? 'space' : 'standard';
+    }
+
+    function getSelectedRoomKennelIds() {
+      const kennelIds = String(getSelectedRoomOption().data('kennel-ids') || '').trim();
+
+      if (!kennelIds) {
+        return [];
+      }
+
+      return kennelIds.split(',').map(function(id) {
+        return String(id).trim();
+      }).filter(function(id) {
+        return id !== '';
+      });
+    }
+
     function refreshAvailableKennels() {
-      if (!isBoardingSelectedService($('#service').val()) || shouldUseRoomForSelectedPets()) {
+      if (!isBoardingSelectedService($('#service').val())) {
+        $('#kennel_group').addClass('hidden');
+        return;
+      }
+
+      if (!$('#room').val()) {
+        $('#kennel_group').addClass('hidden');
         renderKennelOptions(window.initialKennels || [], $('#kennel').val());
         return;
       }
 
-      const boardingStart = $('#boarding_start_datetime').val();
-      const boardingEnd = $('#boarding_end_datetime').val();
-      const currentKennel = $('#kennel').val();
-
-      if (!boardingStart || !boardingEnd) {
-        renderKennelOptions(window.initialKennels || [], currentKennel);
+      if (getSelectedRoomType() === 'space') {
+        $('#kennel_group').addClass('hidden');
+        $('#kennel').val('').trigger('change');
         return;
       }
 
-      $.ajax({
-        url: '{{ route("get-appointment-available-kennels") }}',
-        method: 'GET',
-        dataType: 'json',
-        data: {
-          boarding_start_datetime: boardingStart,
-          boarding_end_datetime: boardingEnd,
-        },
-        success: function(kennels) {
-          renderKennelOptions(kennels, currentKennel);
-        },
-        error: function() {
-          renderKennelOptions(window.initialKennels || [], currentKennel);
-        }
+      const currentKennel = $('#kennel').val();
+
+      const roomKennelIds = getSelectedRoomKennelIds();
+      const roomKennels = (window.initialKennels || []).filter(function(kennel) {
+        return roomKennelIds.includes(String(kennel.id));
       });
+
+      $('#kennel_group').removeClass('hidden');
+      renderKennelOptions(roomKennels, currentKennel);
     }
 
     function changeService(ele) {
@@ -554,31 +617,24 @@
     }
 
     function shouldUseRoomForSelectedPets() {
-      const petTypes = $('#pet option:selected').map(function() {
-        return String($(this).data('pet-type') || '').trim().toLowerCase();
-      }).get().filter(function(type) {
-        return type !== '';
-      });
-
-      return petTypes.length > 0 && petTypes.every(function(type) {
-        return type === 'cat';
-      });
+      return getSelectedRoomType() === 'space';
     }
 
     function updateBoardingLocationField() {
-      const useRoom = shouldUseRoomForSelectedPets();
-
-      if (useRoom) {
+      if (!isBoardingSelectedService($('#service').val())) {
         $('#kennel_group').addClass('hidden');
-        $('#room_group').removeClass('hidden');
-        $('#kennel').val('').trigger('change');
-      } else {
-        $('#kennel_group').removeClass('hidden');
-        $('#room_group').addClass('hidden');
-        $('#room').val('').trigger('change');
+        return;
       }
 
-      refreshAvailableKennels();
+      if (shouldUseRoomForSelectedPets()) {
+        $('#kennel_group').addClass('hidden');
+        $('#kennel').val('').trigger('change');
+      } else if ($('#room').val()) {
+        $('#kennel_group').removeClass('hidden');
+        refreshAvailableKennels();
+      } else {
+        $('#kennel_group').addClass('hidden');
+      }
     }
 
     function syncAdditionalServiceTimeSlotVisibility() {
@@ -796,7 +852,7 @@
       const scheduledAdditionalServiceId = getSelectedAdditionalServiceForTimeSlot();
       const kennel = $('#kennel').val();
       const room = $('#room').val();
-      const useRoom = shouldUseRoomForSelectedPets();
+      const selectedRoomType = getSelectedRoomType();
 
       if (!customer || pet.length === 0 || !service) {
         $('#alert_message').text('Please fill in all required fields.');
@@ -804,16 +860,25 @@
         return;
       }
 
-      if (isBoarding && useRoom && !room) {
-        $('#alert_message').text('Please select a cat room for the boarding appointment.');
+      if (isBoarding && !room) {
+        $('#alert_message').text('Please select a room for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && !useRoom && !kennel) {
+      if (isBoarding && selectedRoomType === 'standard' && !kennel) {
         $('#alert_message').text('Please select a kennel for the boarding appointment.');
         alert_modal.showModal();
         return;
+      }
+
+      if (isBoarding && selectedRoomType === 'standard') {
+        const roomKennelIds = getSelectedRoomKennelIds();
+        if (kennel && roomKennelIds.length > 0 && !roomKennelIds.includes(String(kennel))) {
+          $('#alert_message').text('The selected kennel does not belong to the selected room.');
+          alert_modal.showModal();
+          return;
+        }
       }
 
       if (isBoarding && scheduledAdditionalServiceId && !timeSlot) {
@@ -856,59 +921,112 @@
       const selectedAdditionalServices = $('#additional_services').val() || [];
       const chauffeurSelected = hasSelectedChauffeurAdditionalService(selectedAdditionalServices);
 
-      setSaveButtonLoading(true);
+      const submitAppointment = function() {
+        setSaveButtonLoading(true);
+
+        $.ajax({
+          url: '{{ route("get-validation-info") }}',
+          method: 'POST',
+          data: {
+            pet_id: primaryPetId || null,
+            pet_ids: pet,
+            service_id: service,
+            additional_services: selectedAdditionalServices,
+          },
+          headers: {
+            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+          },
+          dataType: 'json',
+          success: function(response) {
+            setSaveButtonLoading(false);
+
+            let validationMessage = '';
+            if (!response.owner_status) {
+              validationMessage += `<li>Pet owner's profile is inactive.</li>`;
+            }
+            if (response.vaccine_status === 'expired' || !response.vaccine_status) {
+              const vaccineMessages = Array.isArray(response.vaccine_messages) && response.vaccine_messages.length
+                ? response.vaccine_messages
+                : [response.vaccine_message || (response.vaccine_status === 'expired' ? 'Pet vaccination is expired.' : 'Pet vaccination records is not approved.')];
+              vaccineMessages.forEach(function(message) {
+                validationMessage += '<li>' + message + '</li>';
+              });
+            }
+            if (!response.questionnaire_status) {
+              validationMessage += '<li>Pet questionnaire is not approved.</li>';
+            }
+            if (!response.available_status) {
+              validationMessage += '<li>Online booking is currently limited due to high demand.</li>';
+            }
+            if (validationMessage) {
+              validationMessage = `Please address the following issues before creating the appointment:<br>
+                <ul style="list-style: disc; font-size: 14px; padding-left: 24px; padding-top: 6px;">${validationMessage}</ul>`;
+              $('#confirm_message').html(validationMessage);
+              confirm_modal.showModal();
+            } else {
+              $('#create_form').attr('action', '{{ route("create-appointment") }}');
+              $('#create_form').submit();
+            }
+          },
+          error: function() {
+            setSaveButtonLoading(false);
+            console.error('Failed to validate appointment details.');
+            $('#alert_message').text('An error occurred while validating the appointment. Please try again.');
+            alert_modal.showModal();
+          }
+        });
+      };
+
+      if (!isBoarding) {
+        submitAppointment();
+        return;
+      }
 
       $.ajax({
-        url: '{{ route("get-validation-info") }}',
+        url: '{{ route("validate-assignment") }}',
         method: 'POST',
-        data: {
-          pet_id: primaryPetId || null,
-          pet_ids: pet,
-          service_id: service,
-          additional_services: selectedAdditionalServices,
-        },
+        dataType: 'json',
         headers: {
           'X-CSRF-TOKEN': '{{ csrf_token() }}'
         },
-        dataType: 'json',
+        data: {
+          room_id: room,
+          kennel_id: selectedRoomType === 'standard' ? kennel : null,
+          pet_ids: pet,
+          boarding_start_datetime: boardingStart,
+          boarding_end_datetime: boardingEnd,
+        },
         success: function(response) {
-          setSaveButtonLoading(false);
+          if (response.conflict && $('#allow_assignment_conflict').val() !== '1') {
+            var messageText = response.message || 'The selected assignment is already in use during this time period.';
+            messageText += '<br><br>Do you want to continue anyway?';
+            $('#assignment_message').html(messageText);
+            $('#assignment_conflict_info').val(JSON.stringify(response));
+            $('#continue_anyway_btn').show();
+            assignment_modal.showModal();
+            return;
+          }
 
-          let validationMessage = '';
-          if (!response.owner_status) {
-            validationMessage += `<li>Pet owner's profile is inactive.</li>`;
-          }
-          if (response.vaccine_status === 'expired' || !response.vaccine_status) {
-            const vaccineMessages = Array.isArray(response.vaccine_messages) && response.vaccine_messages.length
-              ? response.vaccine_messages
-              : [response.vaccine_message || (response.vaccine_status === 'expired' ? 'Pet vaccination is expired.' : 'Pet vaccination records is not approved.')];
-            vaccineMessages.forEach(function(message) {
-              validationMessage += '<li>' + message + '</li>';
-            });
-          }
-          if (!response.questionnaire_status) {
-            validationMessage += '<li>Pet questionnaire is not approved.</li>';
-          }
-          if (!response.available_status) {
-            validationMessage += '<li>Online booking is currently limited due to high demand.</li>';
-          }
-          if (validationMessage) {
-            validationMessage = `Please address the following issues before creating the appointment:<br>
-              <ul style="list-style: disc; font-size: 14px; padding-left: 24px; padding-top: 6px;">${validationMessage}</ul>`;
-            $('#confirm_message').html(validationMessage);
-            confirm_modal.showModal();
-          } else {
-            $('#create_form').attr('action', '{{ route("create-appointment") }}');
-            $('#create_form').submit();
-          }
+          submitAppointment();
         },
         error: function() {
           setSaveButtonLoading(false);
-          console.error('Failed to validate appointment details.');
-          $('#alert_message').text('An error occurred while validating the appointment. Please try again.');
+          $('#alert_message').text('An error occurred while validating the assignment. Please try again.');
           alert_modal.showModal();
         }
       });
+    }
+
+    function changeAssignmentRoom() {
+      $('#allow_assignment_conflict').val('0');
+      $('#assignment_conflict_info').val('');
+      assignment_modal.close();
+    }
+
+    function continueWithAssignmentConflict() {
+      $('#allow_assignment_conflict').val('1');
+      assignment_modal.close();
+      saveAppointment();
     }
 
     function confirmAction() {
@@ -917,5 +1035,6 @@
 
     // Initialize modals
     const confirm_modal = document.getElementById('confirm_modal');
+    const assignment_modal = document.getElementById('assignment_modal');
   </script>
 @endsection

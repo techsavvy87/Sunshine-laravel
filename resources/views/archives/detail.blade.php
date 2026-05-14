@@ -99,6 +99,20 @@
       <p class="font-medium">Estimated Price: </p>
       <p class="text-base-content/70">${{ number_format($appointment->estimated_price, 2) }}</p>
     </div>
+    @php
+      $archiveFleaTickFlows = $checkin && $checkin->flows
+        ? (is_array($checkin->flows) ? $checkin->flows : json_decode($checkin->flows, true))
+        : [];
+      $archiveFleaTickBreakdown = isBoardingService($appointment->service)
+        ? getBoardingFleaTickBreakdown($appointment, is_array($archiveFleaTickFlows) ? $archiveFleaTickFlows : [])
+        : ['amount' => 0];
+    @endphp
+    @if (!empty($archiveFleaTickBreakdown['amount']))
+    <div class="flex items-center gap-2">
+      <p class="font-medium">Flea/Tick Fee: </p>
+      <p class="text-base-content/70">${{ number_format($archiveFleaTickBreakdown['amount'], 2) }}</p>
+    </div>
+    @endif
     @endif
   </div>
   <div class="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-12">

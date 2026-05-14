@@ -46,6 +46,8 @@
   @include('layouts.alerts')
   @php
     $selectedKennelIds = array_map('intval', old('kennel_ids', $room->kennel_id_array));
+    $selectedRoomType = old('room_type', in_array('space', $room->room_type_array) ? 'space' : 'standard');
+    $selectedPetLabels = old('pet_type_labels', $room->pet_type_label_array);
   @endphp
   <form action="{{ route('update-room') }}" method="POST" enctype="multipart/form-data" id="update_form">
     @csrf
@@ -76,12 +78,17 @@
                 </label>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="type">Type*</label>
-                <select class="select w-full" name="type" id="type">
-                  <option value="dog" {{ old('type', $room->type) === 'dog' ? 'selected' : '' }}>Dog</option>
-                  <option value="cat" {{ old('type', $room->type) === 'cat' ? 'selected' : '' }}>Cat</option>
-                  <option value="other" {{ old('type', $room->type) === 'other' ? 'selected' : '' }}>Other</option>
-                </select>
+                <label class="fieldset-label">Room Type*</label>
+                <div class="flex flex-wrap gap-4 rounded-box border border-base-300 px-3 py-2">
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="radio radio-sm" type="radio" name="room_type" value="standard" id="room_type_standard" {{ $selectedRoomType === 'standard' ? 'checked' : '' }} />
+                    <span>Standard</span>
+                  </label>
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="radio radio-sm" type="radio" name="room_type" value="space" id="room_type_space" {{ $selectedRoomType === 'space' ? 'checked' : '' }} />
+                    <span>Space</span>
+                  </label>
+                </div>
               </div>
               <div class="space-y-2">
                 <label class="fieldset-label" for="status">Status*</label>
@@ -91,15 +98,47 @@
                   <option value="Maintenance" {{ old('status', $room->status) === 'Maintenance' ? 'selected' : '' }}>Maintenance</option>
                 </select>
               </div>
-              <div id="kennel_ids_wrapper" class="space-y-2 {{ old('type', $room->type) === 'cat' ? 'hidden' : '' }}">
+              <div id="kennel_ids_wrapper" class="space-y-2 {{ $selectedRoomType === 'standard' ? '' : 'hidden' }}">
                 <label class="fieldset-label" for="kennel_ids">Assigned Kennels</label>
                 <select class="select w-full" name="kennel_ids[]" id="kennel_ids" multiple>
                   @foreach ($kennels as $kennel)
                   <option value="{{ $kennel->id }}" {{ in_array($kennel->id, $selectedKennelIds) ? 'selected' : '' }}>
-                    {{ $kennel->name }} ({{ ucfirst($kennel->type) }})
+                    {{ $kennel->name }}
                   </option>
                   @endforeach
                 </select>
+              </div>
+              <div id="space_option_wrapper" class="space-y-2 xl:col-span-2 {{ $selectedRoomType === 'space' ? '' : 'hidden' }}">
+                <label class="fieldset-label">Space Option*</label>
+                <div class="flex flex-wrap gap-4 rounded-box border border-base-300 px-3 py-2">
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="radio radio-sm" type="radio" name="space_option" value="restrict" {{ old('space_option', $room->space_option) === 'restrict' ? 'checked' : '' }} />
+                    <span>Restrict</span>
+                  </label>
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="radio radio-sm" type="radio" name="space_option" value="multi" {{ old('space_option', $room->space_option) === 'multi' ? 'checked' : '' }} />
+                    <span>Multi</span>
+                  </label>
+                </div>
+              </div>
+              <div id="restrict_count_wrapper" class="space-y-2 xl:col-span-2 {{ old('space_option', $room->space_option) === 'restrict' && $selectedRoomType === 'space' ? '' : 'hidden' }}">
+                <label class="fieldset-label" for="restrict_count">Restrict Count*</label>
+                <label class="input w-full focus:outline-0">
+                  <input class="grow focus:outline-0" type="number" min="1" step="1" id="restrict_count" name="restrict_count" value="{{ old('restrict_count', $room->restrict_count) }}" placeholder="Enter max count" />
+                </label>
+              </div>
+              <div id="pet_type_labels_wrapper" class="space-y-2 xl:col-span-2 {{ $selectedRoomType === 'space' ? '' : 'hidden' }}">
+                <label class="fieldset-label">Pet Type Labels</label>
+                <div class="flex flex-wrap gap-4 rounded-box border border-base-300 px-3 py-2">
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="checkbox checkbox-sm" type="checkbox" name="pet_type_labels[]" value="dog" {{ in_array('dog', $selectedPetLabels) ? 'checked' : '' }} />
+                    <span>Dog</span>
+                  </label>
+                  <label class="inline-flex items-center gap-2 cursor-pointer">
+                    <input class="checkbox checkbox-sm" type="checkbox" name="pet_type_labels[]" value="cat" {{ in_array('cat', $selectedPetLabels) ? 'checked' : '' }} />
+                    <span>Cat</span>
+                  </label>
+                </div>
               </div>
               <div class="space-y-2 xl:col-span-4">
                 <label class="fieldset-label" for="description">Description</label>
@@ -131,6 +170,14 @@
   <script src="{{ asset('src/libs/select2/select2.min.js') }}"></script>
 
   <script>
+    const alert_modal = document.getElementById('alert_modal') || null;
+    const pageAlertMessage = @json(session('status') === 'fail' ? session('message') : ($errors->any() ? $errors->first() : ''));
+
+    if (pageAlertMessage && alert_modal) {
+      $('#alert_message').text(pageAlertMessage);
+      alert_modal.showModal();
+    }
+
     $(document).ready(function() {
       $('#kennel_ids').select2({
         placeholder: 'Select kennels',
@@ -140,14 +187,64 @@
         closeOnSelect: false
       });
 
-      const toggleKennelField = () => {
-        const isCat = $('#type').val() === 'cat';
-        $('#kennel_ids_wrapper').toggleClass('hidden', isCat);
-        $('#kennel_ids').prop('disabled', isCat).trigger('change.select2');
+      const syncRoomTypeSections = () => {
+        const roomType = $('input[name="room_type"]:checked').val() || 'standard';
+        const isStandard = roomType === 'standard';
+        const isSpace = roomType === 'space';
+
+        $('#kennel_ids_wrapper').toggleClass('hidden', !isStandard);
+        $('#kennel_ids').prop('disabled', !isStandard).trigger('change.select2');
+
+        $('#space_option_wrapper').toggleClass('hidden', !isSpace);
+        $('#pet_type_labels_wrapper').toggleClass('hidden', !isSpace);
+        if (!isSpace) {
+          $('input[name="space_option"]').prop('checked', false);
+          $('input[name="pet_type_labels[]"]').prop('checked', false);
+          $('#restrict_count').val('');
+          $('#restrict_count_wrapper').addClass('hidden');
+        }
+
+        if (!isStandard) {
+          $('#kennel_ids').val(null).trigger('change');
+        }
       };
 
-      $('#type').on('change', toggleKennelField);
-      toggleKennelField();
+      const syncRestrictCount = () => {
+        const isSpace = ($('input[name="room_type"]:checked').val() || 'standard') === 'space';
+        const isRestrict = $('input[name="space_option"]:checked').val() === 'restrict';
+        $('#restrict_count_wrapper').toggleClass('hidden', !(isSpace && isRestrict));
+
+        if (!(isSpace && isRestrict)) {
+          $('#restrict_count').val('');
+        }
+      };
+
+      $('input[name="room_type"]').on('change', function() {
+        syncRoomTypeSections();
+        syncRestrictCount();
+      });
+      $('input[name="space_option"]').on('change', syncRestrictCount);
+      syncRoomTypeSections();
+      syncRestrictCount();
+
+      $('#update_form').on('submit', function(event) {
+        const roomType = $('input[name="room_type"]:checked').val();
+        const isSpace = roomType === 'space';
+
+        if (isSpace && !$('input[name="space_option"]:checked').length) {
+          event.preventDefault();
+          $('#alert_message').text('Please choose Restrict or Multi when Space is selected.');
+          alert_modal.showModal();
+          return;
+        }
+
+        if (isSpace && $('input[name="space_option"]:checked').val() === 'restrict' && !$('#restrict_count').val()) {
+          event.preventDefault();
+          $('#alert_message').text('Please enter Restrict count when Restrict is selected.');
+          alert_modal.showModal();
+          return;
+        }
+      });
     });
 
     FilePond.registerPlugin(FilePondPluginImagePreview);

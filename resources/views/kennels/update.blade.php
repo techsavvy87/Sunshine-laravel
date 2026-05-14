@@ -40,19 +40,18 @@
         <div class="card bg-base-100 shadow">
           <div class="card-body">
             <div class="card-title">Basic Information</div>
-            <div class="fieldset mt-2 grid grid-cols-1 gap-4 xl:grid-cols-4">
-              <div class="xl:col-span-2 space-y-2">
+            <div class="fieldset mt-2 grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <div class="space-y-2">
                 <label class="fieldset-label" for="name">Kennel Name*</label>
                 <label class="input w-full focus:outline-0">
                   <input class="grow focus:outline-0" placeholder="e.g. Room A" id="name" name="name" type="text" value="{{ old('name', $kennel->name) }}" />
                 </label>
               </div>
               <div class="space-y-2">
-                <label class="fieldset-label" for="type">Type*</label>
-                <select class="select w-full" name="type" id="type">
-                  <option value="dog" {{ old('type', $kennel->type) === 'dog' ? 'selected' : '' }}>Dog</option>
-                  <option value="cat" {{ old('type', $kennel->type) === 'cat' ? 'selected' : '' }}>Cat</option>
-                </select>
+                <label class="fieldset-label" for="capacity">Capacity*</label>
+                <label class="input w-full focus:outline-0">
+                  <input class="grow focus:outline-0" placeholder="e.g. 1" id="capacity" name="capacity" type="number" min="1" step="1" value="{{ old('capacity', $kennel->capacity ?? 1) }}" />
+                </label>
               </div>
               <div class="space-y-2">
                 <label class="fieldset-label" for="status">Status*</label>
@@ -62,7 +61,7 @@
                   <option value="Cleaning" {{ old('status', $kennel->status) === 'Cleaning' ? 'selected' : '' }}>Cleaning</option>
                 </select>
               </div>
-              <div class="space-y-2 xl:col-span-2">
+              <div class="space-y-2 xl:col-span-3">
                 <label class="fieldset-label" for="description">Description</label>
                 <textarea class="textarea w-full min-h-24" placeholder="Description" name="description" id="description">{{ old('description', $kennel->description) }}</textarea>
               </div>

@@ -136,14 +136,8 @@ class AppointmentController extends Controller
             ->with('category')
             ->get();
 
-        $kennels = Kennel::where('status', 'In Service')
-            ->orderBy('name')
-            ->get();
-
-        $rooms = Room::where('status', 'Available')
-            ->where('type', 'cat')
-            ->orderBy('name')
-            ->get();
+        $kennels = Kennel::orderBy('name')->get();
+        $rooms = $this->getAssignmentRooms();
 
         return view('appointments.create', compact(
             'services',
@@ -298,6 +292,91 @@ class AppointmentController extends Controller
         return response()->json($kennels);
     }
 
+    public function validateAssignment(Request $request)
+    {
+        $request->validate([
+            'room_id' => 'required|exists:rooms,id',
+            'kennel_id' => 'nullable|exists:kennels,id',
+            'pet_ids' => 'nullable|array',
+            'pet_ids.*' => 'exists:pet_profiles,id',
+            'boarding_start_datetime' => 'required|date',
+            'boarding_end_datetime' => 'required|date|after:boarding_start_datetime',
+            'appointment_id' => 'nullable|exists:appointments,id',
+        ]);
+
+        $room = Room::findOrFail($request->room_id);
+        $startDateTime = Carbon::parse($request->boarding_start_datetime);
+        $endDateTime = Carbon::parse($request->boarding_end_datetime);
+        $excludeAppointmentId = $request->filled('appointment_id') ? (int) $request->appointment_id : null;
+        $roomType = $this->getRoomAssignmentType($room);
+        $kennelId = $request->filled('kennel_id') ? (int) $request->kennel_id : null;
+        $petIds = collect($request->input('pet_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
+        // Kennels are dogs-only: block cats from being assigned to a kennel
+        if ($roomType === 'standard' && $kennelId !== null && !empty($petIds)) {
+            $cats = PetProfile::whereIn('id', $petIds)
+                ->whereRaw('LOWER(type) = ?', ['cat'])
+                ->get();
+
+            if ($cats->isNotEmpty()) {
+                $kennel = Kennel::find($kennelId);
+                $kennelName = $kennel ? $kennel->name : 'the selected kennel';
+
+                $catNames = $cats->pluck('name')->map(fn ($n) => "<strong>{$n}</strong>")->implode(', ');
+                $plural = $cats->count() > 1;
+
+                $catRooms = Room::get()
+                    ->filter(fn ($r) => in_array('cat', $r->pet_type_label_array))
+                    ->pluck('name')
+                    ->values();
+
+                $catRoomSuggestion = $catRooms->isNotEmpty()
+                    ? 'Please use one of these cat rooms instead: <strong>' . $catRooms->implode('</strong>, <strong>') . '</strong>.'
+                    : 'Please choose a cat room instead.';
+
+                $verb = $plural ? 'are cats' : 'is a cat';
+
+                return response()->json([
+                    'conflict' => true,
+                    'conflict_type' => 'cat_kennel',
+                    'valid' => false,
+                    'room_type' => $roomType,
+                    'room_id' => $room->id,
+                    'room_name' => $room->name,
+                    'message' => "Kennels are for dogs only. {$catNames} {$verb} and cannot stay in kennel <strong>\"{$kennelName}\"</strong>.<br><br>{$catRoomSuggestion}",
+                ]);
+            }
+        }
+
+        if ($roomType !== 'standard') {
+            $petTypeValidation = $this->validateRoomPetTypes($room, $petIds);
+            if ($petTypeValidation['valid'] === false) {
+                return response()->json(array_merge([
+                    'conflict' => true,
+                    'conflict_type' => 'pet_type',
+                    'room_type' => $roomType,
+                    'room_id' => $room->id,
+                    'room_name' => $room->name,
+                ], $petTypeValidation));
+            }
+        }
+
+        $conflict = $roomType === 'space'
+            ? $this->buildSpaceRoomConflictPayload($room, $startDateTime, $endDateTime, $excludeAppointmentId)
+            : $this->buildKennelConflictPayload($room, $kennelId, $startDateTime, $endDateTime, $excludeAppointmentId);
+
+        return response()->json(array_merge([
+            'conflict' => false,
+            'room_type' => $roomType,
+            'room_id' => $room->id,
+            'room_name' => $room->name,
+        ], $conflict));
+    }
+
     private function getOverlappingBoardingAppointmentsQuery(Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null)
     {
         $query = Appointment::query()
@@ -315,6 +394,217 @@ class AppointmentController extends Controller
         }
 
         return $query;
+    }
+
+    private function validateRoomPetTypes(Room $room, array $petIds): array
+    {
+        if (empty($petIds)) {
+            return ['valid' => true];
+        }
+
+        $pets = PetProfile::whereIn('id', $petIds)->get();
+        if ($pets->isEmpty()) {
+            return ['valid' => true];
+        }
+
+        $petTypes = $pets->map(fn ($pet) => strtolower((string) ($pet->type ?? '')))
+            ->filter(fn ($type) => $type !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        $roomPetTypeLabels = $room->pet_type_label_array;
+        $roomName = $room->name;
+
+        if (empty($roomPetTypeLabels)) {
+            return [
+                'valid' => false,
+                'message' => "\"{$roomName}\" has not been set up — no animal type has been configured for this room. Please contact an administrator.",
+            ];
+        }
+
+        $unsupportedTypes = array_diff($petTypes, $roomPetTypeLabels);
+
+        if (!empty($unsupportedTypes)) {
+            $allowedStr = implode(' and ', array_map('ucfirst', $roomPetTypeLabels));
+            $unsupportedStr = implode(' and ', array_map('ucfirst', $unsupportedTypes));
+
+            // Find rooms that support the unsupported types
+            $alternativeRooms = Room::where('id', '!=', $room->id)
+                ->get()
+                ->filter(function ($r) use ($unsupportedTypes) {
+                    $labels = $r->pet_type_label_array;
+                    return !empty(array_intersect($unsupportedTypes, $labels));
+                })
+                ->pluck('name')
+                ->values();
+
+            $suggestionLine = $alternativeRooms->isNotEmpty()
+                ? 'Please assign the ' . $unsupportedStr . ' to: <strong>' . $alternativeRooms->implode('</strong>, <strong>') . '</strong>.'
+                : 'Please choose a room that accepts ' . $unsupportedStr . 's.';
+
+            return [
+                'valid' => false,
+                'message' => "<strong>\"{$roomName}\"</strong> is for {$allowedStr}s only — it does not accept {$unsupportedStr}s.<br><br>{$suggestionLine}",
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    private function validateCatToKennelAssignment(?int $kennelId, array $petIds): array
+    {
+        if (!$kennelId || empty($petIds)) {
+            return ['valid' => true];
+        }
+
+        // Check if any selected pets are cats
+        $cats = PetProfile::whereIn('id', $petIds)
+            ->whereRaw('LOWER(type) = ?', ['cat'])
+            ->get();
+
+        if ($cats->isEmpty()) {
+            return ['valid' => true];
+        }
+
+        // Cats cannot be assigned to kennels
+        return [
+            'valid' => false,
+            'message' => 'Kennels are for dogs only. Cats cannot be assigned to kennels. Please use a cat room instead.',
+        ];
+    }
+
+    private function getAssignmentRooms()
+    {
+        return Room::orderBy('name')->get();
+    }
+
+    private function getRoomAssignmentType(?Room $room): ?string
+    {
+        if (!$room) {
+            return null;
+        }
+
+        $roomTypes = $room->room_type_array;
+
+        return in_array('space', $roomTypes, true) ? 'space' : 'standard';
+    }
+
+    private function getRoomKennels(Room $room)
+    {
+        $kennelIds = $room->kennel_id_array;
+
+        if (empty($kennelIds)) {
+            return collect();
+        }
+
+        return Kennel::whereIn('id', $kennelIds)->orderBy('name')->get();
+    }
+
+    private function buildAssignmentConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
+    {
+        $roomType = $this->getRoomAssignmentType($room);
+
+        if ($roomType === 'space') {
+            return $this->buildSpaceRoomConflictPayload($room, $newStart, $newEnd, $excludeAppointmentId);
+        }
+
+        return $this->buildKennelConflictPayload($room, $kennelId, $newStart, $newEnd, $excludeAppointmentId);
+    }
+
+    private function buildKennelConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
+    {
+        if (!$kennelId) {
+            return ['conflict' => false];
+        }
+
+        $kennel = Kennel::find($kennelId);
+        if (!$kennel) {
+            return ['conflict' => false];
+        }
+
+        $overlappingAppointments = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd, $excludeAppointmentId)
+            ->where('kennel_id', $kennelId)
+            ->with(['pet', 'customer.profile'])
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get();
+
+        $occupiedCount = $overlappingAppointments->count();
+        $capacity = (int) ($kennel->capacity ?? 0);
+
+        if ($capacity > 0 && $occupiedCount >= $capacity) {
+            return [
+                'conflict' => true,
+                'conflict_type' => 'kennel',
+                'message' => 'Kennel already has an active assignment.',
+                'current_occupants' => $this->formatAssignmentOccupants($overlappingAppointments),
+                'occupied_count' => $occupiedCount,
+                'capacity' => $capacity,
+                'room_name' => $room->name,
+                'kennel_name' => $kennel->name,
+            ];
+        }
+
+        return [
+            'conflict' => false,
+            'occupied_count' => $occupiedCount,
+            'capacity' => $capacity,
+            'room_name' => $room->name,
+            'kennel_name' => $kennel->name,
+        ];
+    }
+
+    private function buildSpaceRoomConflictPayload(Room $room, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
+    {
+        $restrictCount = $room->restrict_count;
+        if ($restrictCount === null) {
+            return ['conflict' => false, 'room_name' => $room->name];
+        }
+
+        $overlappingAppointments = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd, $excludeAppointmentId)
+            ->where('cat_room_id', $room->id)
+            ->with(['pet', 'customer.profile'])
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get();
+
+        $occupiedCount = $overlappingAppointments->count();
+
+        if ($occupiedCount >= (int) $restrictCount) {
+            return [
+                'conflict' => true,
+                'conflict_type' => 'room',
+                'message' => 'Room already has an active assignment.',
+                'current_occupants' => $this->formatAssignmentOccupants($overlappingAppointments),
+                'occupied_count' => $occupiedCount,
+                'capacity' => (int) $restrictCount,
+                'room_name' => $room->name,
+            ];
+        }
+
+        return [
+            'conflict' => false,
+            'occupied_count' => $occupiedCount,
+            'capacity' => (int) $restrictCount,
+            'room_name' => $room->name,
+        ];
+    }
+
+    private function formatAssignmentOccupants($appointments): array
+    {
+        return collect($appointments)->map(function ($appointment) {
+            $pets = collect($appointment->familyPets ?? [$appointment->pet])->filter();
+            $petNames = $pets->pluck('name')->filter()->values()->all();
+            $firstPet = $pets->first();
+
+            return [
+                'pet_names' => $petNames,
+                'pet_type' => strtolower((string) optional($firstPet)->type),
+                'start_date' => $appointment->date ? Carbon::parse($appointment->date)->toDateString() : null,
+                'end_date' => $appointment->end_date ? Carbon::parse($appointment->end_date)->toDateString() : ($appointment->date ? Carbon::parse($appointment->date)->toDateString() : null),
+            ];
+        })->values()->all();
     }
 
     private function serviceRequiresScheduledSlot($service): bool
@@ -686,13 +976,13 @@ class AppointmentController extends Controller
             'additional_services.*' => 'exists:services,id',
         ]);
 
-        $capacity  = Kennel::count() + Room::where('type', '!=', 'dog')->count();
+        $capacity  = Kennel::count() + $this->spaceRoomsQuery()->count();
         $occupiedKennelCount = Appointment::whereNotNull('kennel_id')
             ->whereIn('status', ['checked_in', 'in_progress'])
             ->whereHas('service.category', fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']))
             ->distinct('kennel_id')
             ->count('kennel_id');
-        $occupied = $occupiedKennelCount + Room::where('status', '!=', 'Available')->where('type', '!=', 'dog')->count();
+        $occupied = $occupiedKennelCount + $this->spaceRoomsQuery()->where('status', '!=', 'Available')->count();
         $available_status = $occupied / $capacity < 0.5? true : false;
 
         $selectedPetIds = collect($request->input('pet_ids', []))
@@ -807,6 +1097,8 @@ class AppointmentController extends Controller
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
             'room' => 'nullable|exists:rooms,id',
+            'allow_assignment_conflict' => 'nullable|boolean',
+            'assignment_conflict_info' => 'nullable|string',
             'date' => 'nullable|date',
             'time_slot' => 'nullable|exists:time_slots,id',
             'additional_services' => 'nullable|array',
@@ -842,46 +1134,94 @@ class AppointmentController extends Controller
 
         $service = Service::with('category')->find($request->service);
         $selectedPets = PetProfile::whereIn('id', $petIds)->get();
-        $allSelectedPetsAreCats = $selectedPets->isNotEmpty()
-            && $selectedPets->every(fn ($pet) => strtolower((string) $pet->type) === 'cat');
-
+        $selectedRoom = $request->filled('room') ? Room::find($request->room) : null;
+        $roomType = $this->getRoomAssignmentType($selectedRoom);
         $assignedKennelId = $request->filled('kennel') ? (int) $request->kennel : null;
-        $selectedRoom = null;
+        $assignmentConflict = null;
 
         if (isBoardingService($service)) {
-            if ($allSelectedPetsAreCats) {
-                if (!$request->filled('room')) {
-                    return back()->withErrors([
-                        'room' => 'Please select a cat room for the boarding appointment.'
-                    ])->withInput();
-                }
-
-                $selectedRoom = Room::where('status', 'Available')
-                    ->where('type', 'cat')
-                    ->find($request->room);
-
-                if (!$selectedRoom) {
-                    return back()->withErrors([
-                        'room' => 'The selected room is not available for cat boarding.'
-                    ])->withInput();
-                }
-
-                $assignedKennelId = null;
-            } elseif (!$assignedKennelId) {
+            if (!$selectedRoom) {
                 return back()->withErrors([
-                    'kennel' => 'Please select a kennel for the boarding appointment.'
+                    'room' => 'Please select a room for the boarding appointment.'
                 ])->withInput();
-            } elseif ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
-                $newStart = Carbon::parse($request->boarding_start_datetime);
-                $newEnd = Carbon::parse($request->boarding_end_datetime);
+            }
 
-                $hasOverlap = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd)
-                    ->where('kennel_id', $assignedKennelId)
-                    ->exists();
+            if (!$request->boolean('allow_assignment_conflict')) {
+                if ($roomType !== 'standard') {
+                    $petTypeValidation = $this->validateRoomPetTypes($selectedRoom, $petIds);
+                    if ($petTypeValidation['valid'] === false) {
+                        return back()->withErrors([
+                            'room' => $petTypeValidation['message'] ?? 'This room cannot be used for the selected pets.'
+                        ])->withInput();
+                    }
+                }
 
-                if ($hasOverlap) {
+                if ($roomType === 'standard') {
+                    if (!$assignedKennelId) {
+                        return back()->withErrors([
+                            'kennel' => 'Please select a kennel for the selected room.'
+                        ])->withInput();
+                    }
+
+                    if (!in_array($assignedKennelId, $selectedRoom->kennel_id_array, true)) {
+                        return back()->withErrors([
+                            'kennel' => 'The selected kennel does not belong to the selected room.'
+                        ])->withInput();
+                    }
+
+                    // Check cat-to-kennel conflict
+                    $catToKennelConflict = $this->validateCatToKennelAssignment($assignedKennelId, $petIds);
+                    if ($catToKennelConflict['valid'] === false) {
+                        return back()->withErrors([
+                            'kennel' => $catToKennelConflict['message'] ?? 'This kennel cannot be used for the selected pets.'
+                        ])->withInput();
+                    }
+                } else {
+                    $assignedKennelId = null;
+                }
+            } elseif ($roomType !== 'standard') {
+                $assignedKennelId = null;
+            }
+
+            // Check for cat-to-kennel conflict even when allow_assignment_conflict is true
+            if ($roomType === 'standard' && $assignedKennelId) {
+                $catToKennelConflict = $this->validateCatToKennelAssignment($assignedKennelId, $petIds);
+                if ($catToKennelConflict['valid'] === false && empty($assignmentConflict)) {
+                    $assignmentConflict = [
+                        'conflict' => true,
+                        'conflict_type' => 'cat_to_kennel',
+                        'message' => $catToKennelConflict['message'] ?? 'This kennel cannot be used for the selected pets.'
+                    ];
+                }
+            }
+
+            // Keep conflict metadata for room/pet mismatch when override is allowed.
+            if ($roomType !== 'standard' && empty($assignmentConflict)) {
+                $petTypeValidation = $this->validateRoomPetTypes($selectedRoom, $petIds);
+                if ($petTypeValidation['valid'] === false) {
+                    $assignmentConflict = [
+                        'conflict' => true,
+                        'conflict_type' => 'pet_type',
+                        'message' => $petTypeValidation['message'] ?? 'This room cannot be used for the selected pets.'
+                    ];
+                }
+            }
+
+            if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+                $payloadConflict = $this->buildAssignmentConflictPayload(
+                    $selectedRoom,
+                    $assignedKennelId,
+                    Carbon::parse($request->boarding_start_datetime),
+                    Carbon::parse($request->boarding_end_datetime)
+                );
+
+                if (!empty($payloadConflict['conflict']) && empty($assignmentConflict)) {
+                    $assignmentConflict = $payloadConflict;
+                }
+
+                if (!empty($assignmentConflict['conflict']) && !$request->boolean('allow_assignment_conflict')) {
                     return back()->withErrors([
-                        'kennel' => 'The selected kennel is already booked during this time period.'
+                        'room' => $assignmentConflict['message'] ?? 'The selected assignment is already in use during this time period.'
                     ])->withInput();
                 }
             }
@@ -917,6 +1257,36 @@ class AppointmentController extends Controller
             $metadata['additional_service_time_slot_date'] = $timeSlot->date;
             $metadata['additional_service_time_slot_start_time'] = $timeSlot->start_time;
             $metadata['additional_service_time_slot_end_time'] = $timeSlot->end_time;
+        }
+
+        if ($selectedRoom) {
+            $metadata['assignment_room_id'] = $selectedRoom->id;
+            $metadata['assignment_room_name'] = $selectedRoom->name;
+            $metadata['assignment_room_type'] = $roomType;
+            if ($roomType === 'standard' && $assignedKennelId) {
+                $metadata['assignment_kennel_id'] = $assignedKennelId;
+                $metadata['assignment_kennel_name'] = optional(Kennel::find($assignedKennelId))->name;
+            } else {
+                unset($metadata['assignment_kennel_id'], $metadata['assignment_kennel_name']);
+            }
+
+            if (!empty($assignmentConflict['conflict'])) {
+                $metadata['assignment_conflict'] = true;
+                $metadata['assignment_conflict_type'] = $assignmentConflict['conflict_type'] ?? null;
+                $metadata['assignment_conflict_message'] = $assignmentConflict['message'] ?? null;
+                $metadata['assignment_conflict_occupants'] = $assignmentConflict['current_occupants'] ?? [];
+                if ($request->boolean('allow_assignment_conflict')) {
+                    $metadata['was_allowed_with_conflict'] = true;
+                }
+            } else {
+                unset(
+                    $metadata['assignment_conflict'],
+                    $metadata['assignment_conflict_type'],
+                    $metadata['assignment_conflict_message'],
+                    $metadata['assignment_conflict_occupants'],
+                    $metadata['was_allowed_with_conflict']
+                );
+            }
         }
 
         $usedSlotIds = [];
@@ -998,7 +1368,7 @@ class AppointmentController extends Controller
 
         appointment_audit_log($appointment->id, 'Appointment is created.');
 
-        if ($selectedRoom && isBoardingService($service)) {
+        if ($selectedRoom && isBoardingService($service) && $roomType === 'space') {
             $this->markCatRoomOutOfService($selectedRoom->id);
         }
 
@@ -1119,22 +1489,27 @@ class AppointmentController extends Controller
             }
         }
 
-        $kennels = Kennel::where('status', 'In Service')->orderBy('name')->get();
-        $selectedKennel = $appointment->kennel_id ? Kennel::find($appointment->kennel_id) : null;
-        if ($selectedKennel) {
-            $kennels = $kennels->push($selectedKennel)->unique('id')->values();
+        $kennels = Kennel::orderBy('name')->get();
+        $rooms = $this->getAssignmentRooms();
+        $selectedAssignmentRoomId = $appointment->cat_room_id;
+        $selectedAssignmentKennelId = $appointment->kennel_id;
+
+        if (!$selectedAssignmentRoomId && $selectedAssignmentKennelId) {
+            $selectedAssignmentRoomId = $rooms->first(function ($room) use ($selectedAssignmentKennelId) {
+                return in_array((int) $selectedAssignmentKennelId, $room->kennel_id_array, true);
+            })?->id;
         }
 
-        $rooms = Room::where('type', 'cat')
-            ->where('status', 'Available')
-            ->orderBy('name')
-            ->get();
-        $selectedRoom = $appointment->cat_room_id ? Room::find($appointment->cat_room_id) : null;
-        if ($selectedRoom) {
-            $rooms = $rooms->push($selectedRoom)->unique('id')->values();
-        }
-
-        return view('appointments.update', compact('appointment', 'services', 'additionalServices', 'timeSlots', 'kennels', 'rooms'));
+        return view('appointments.update', compact(
+            'appointment',
+            'services',
+            'additionalServices',
+            'timeSlots',
+            'kennels',
+            'rooms',
+            'selectedAssignmentRoomId',
+            'selectedAssignmentKennelId'
+        ));
     }
 
     public function update(Request $request, AppointmentBookingNotifier $bookingNotifier)
@@ -1148,6 +1523,8 @@ class AppointmentController extends Controller
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
             'room' => 'nullable|exists:rooms,id',
+            'allow_assignment_conflict' => 'nullable|boolean',
+            'assignment_conflict_info' => 'nullable|string',
             'date' => 'nullable|date',
             'time_slot' => 'nullable',
             'additional_services' => 'nullable|array',
@@ -1167,47 +1544,97 @@ class AppointmentController extends Controller
 
         $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
         $service = Service::with('category')->find($request->service);
-        $selectedPets = PetProfile::whereIn('id', $petIds)->get();
-        $selectedPetsAreCats = $selectedPets->isNotEmpty()
-            && $selectedPets->every(fn ($pet) => strtolower((string) ($pet->type ?? '')) === 'cat');
-        $selectedRoom = null;
+        $selectedRoom = $request->filled('room') ? Room::find($request->room) : null;
+        $roomType = $this->getRoomAssignmentType($selectedRoom);
+        $selectedKennelId = $request->filled('kennel') ? (int) $request->kennel : null;
+        $assignmentConflict = null;
 
-        if (isBoardingService($service) && $selectedPetsAreCats) {
-            if (!$request->filled('room')) {
-                return back()->withErrors([
-                    'room' => 'Please select a cat room for the boarding appointment.'
-                ])->withInput();
-            }
-
-            $selectedRoom = Room::where('type', 'cat')
-                ->where(function ($query) use ($appointment) {
-                    $query->where('status', 'Available')
-                        ->orWhere('id', $appointment->cat_room_id);
-                })
-                ->find($request->room);
-
+        if (isBoardingService($service)) {
             if (!$selectedRoom) {
                 return back()->withErrors([
-                    'room' => 'The selected room is not available for cat boarding.'
+                    'room' => 'Please select a room for the boarding appointment.'
                 ])->withInput();
             }
-        } elseif (isBoardingService($service) && !$request->filled('kennel')) {
-            return back()->withErrors([
-                'kennel' => 'Please select a kennel for the boarding appointment.'
-            ])->withInput();
-        } elseif (isBoardingService($service) && $request->filled('kennel') && $request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
-            $newStart = Carbon::parse($request->boarding_start_datetime);
-            $newEnd = Carbon::parse($request->boarding_end_datetime);
-            $checkKennelId = (int) $request->kennel;
 
-            $hasOverlap = $this->getOverlappingBoardingAppointmentsQuery($newStart, $newEnd, (int) $appointment->id)
-                ->where('kennel_id', $checkKennelId)
-                ->exists();
+            if (!$request->boolean('allow_assignment_conflict')) {
+                if ($roomType !== 'standard') {
+                    $petTypeValidation = $this->validateRoomPetTypes($selectedRoom, $petIds);
+                    if ($petTypeValidation['valid'] === false) {
+                        return back()->withErrors([
+                            'room' => $petTypeValidation['message'] ?? 'This room cannot be used for the selected pets.'
+                        ])->withInput();
+                    }
+                }
 
-            if ($hasOverlap) {
-                return back()->withErrors([
-                    'kennel' => 'The selected kennel is already booked during this time period.'
-                ])->withInput();
+                if ($roomType === 'standard') {
+                    if (!$selectedKennelId) {
+                        return back()->withErrors([
+                            'kennel' => 'Please select a kennel for the selected room.'
+                        ])->withInput();
+                    }
+
+                    if (!in_array($selectedKennelId, $selectedRoom->kennel_id_array, true)) {
+                        return back()->withErrors([
+                            'kennel' => 'The selected kennel does not belong to the selected room.'
+                        ])->withInput();
+                    }
+
+                    // Check cat-to-kennel conflict
+                    $catToKennelConflict = $this->validateCatToKennelAssignment($selectedKennelId, $petIds);
+                    if ($catToKennelConflict['valid'] === false) {
+                        return back()->withErrors([
+                            'kennel' => $catToKennelConflict['message'] ?? 'This kennel cannot be used for the selected pets.'
+                        ])->withInput();
+                    }
+                } else {
+                    $selectedKennelId = null;
+                }
+            } elseif ($roomType !== 'standard') {
+                $selectedKennelId = null;
+            }
+
+            // Check for cat-to-kennel conflict even when allow_assignment_conflict is true
+            if ($roomType === 'standard' && $selectedKennelId) {
+                $catToKennelConflict = $this->validateCatToKennelAssignment($selectedKennelId, $petIds);
+                if ($catToKennelConflict['valid'] === false && empty($assignmentConflict)) {
+                    $assignmentConflict = [
+                        'conflict' => true,
+                        'conflict_type' => 'cat_to_kennel',
+                        'message' => $catToKennelConflict['message'] ?? 'This kennel cannot be used for the selected pets.'
+                    ];
+                }
+            }
+
+            // Keep conflict metadata for room/pet mismatch when override is allowed.
+            if ($roomType !== 'standard' && empty($assignmentConflict)) {
+                $petTypeValidation = $this->validateRoomPetTypes($selectedRoom, $petIds);
+                if ($petTypeValidation['valid'] === false) {
+                    $assignmentConflict = [
+                        'conflict' => true,
+                        'conflict_type' => 'pet_type',
+                        'message' => $petTypeValidation['message'] ?? 'This room cannot be used for the selected pets.'
+                    ];
+                }
+            }
+
+            if ($request->filled('boarding_start_datetime') && $request->filled('boarding_end_datetime')) {
+                $payloadConflict = $this->buildAssignmentConflictPayload(
+                    $selectedRoom,
+                    $selectedKennelId,
+                    Carbon::parse($request->boarding_start_datetime),
+                    Carbon::parse($request->boarding_end_datetime),
+                    (int) $appointment->id
+                );
+
+                if (!empty($payloadConflict['conflict']) && empty($assignmentConflict)) {
+                    $assignmentConflict = $payloadConflict;
+                }
+
+                if (!empty($assignmentConflict['conflict']) && !$request->boolean('allow_assignment_conflict')) {
+                    return back()->withErrors([
+                        'room' => $assignmentConflict['message'] ?? 'The selected assignment is already in use during this time period.'
+                    ])->withInput();
+                }
             }
         }
 
@@ -1257,15 +1684,41 @@ class AppointmentController extends Controller
             );
         }
 
+        if ($selectedRoom) {
+            $metadata['assignment_room_id'] = $selectedRoom->id;
+            $metadata['assignment_room_name'] = $selectedRoom->name;
+            $metadata['assignment_room_type'] = $roomType;
+            if ($roomType === 'standard' && $selectedKennelId) {
+                $metadata['assignment_kennel_id'] = $selectedKennelId;
+                $metadata['assignment_kennel_name'] = optional(Kennel::find($selectedKennelId))->name;
+            } else {
+                unset($metadata['assignment_kennel_id'], $metadata['assignment_kennel_name']);
+            }
+
+            if (!empty($assignmentConflict['conflict'])) {
+                $metadata['assignment_conflict'] = true;
+                $metadata['assignment_conflict_type'] = $assignmentConflict['conflict_type'] ?? null;
+                $metadata['assignment_conflict_message'] = $assignmentConflict['message'] ?? null;
+                $metadata['assignment_conflict_occupants'] = $assignmentConflict['current_occupants'] ?? [];
+                if ($request->boolean('allow_assignment_conflict')) {
+                    $metadata['was_allowed_with_conflict'] = true;
+                }
+            } else {
+                unset(
+                    $metadata['assignment_conflict'],
+                    $metadata['assignment_conflict_type'],
+                    $metadata['assignment_conflict_message'],
+                    $metadata['assignment_conflict_occupants'],
+                    $metadata['was_allowed_with_conflict']
+                );
+            }
+        }
+
         $oldStatus = $appointment->status;
         $oldKennelId = $appointment->kennel_id;
         $oldRoomId = $appointment->cat_room_id;
-        $newKennelId = isBoardingService($service) && !$selectedPetsAreCats && $request->filled('kennel')
-            ? (int) $request->kennel
-            : null;
-        $newRoomId = isBoardingService($service) && $selectedPetsAreCats && $selectedRoom
-            ? (int) $selectedRoom->id
-            : null;
+        $newKennelId = isBoardingService($service) && $roomType === 'standard' ? $selectedKennelId : null;
+        $newRoomId = isBoardingService($service) && $selectedRoom ? (int) $selectedRoom->id : null;
 
         $appointment->customer_id = $request->customer;
         $appointment->pet_id = $primaryPetId;
@@ -1342,7 +1795,7 @@ class AppointmentController extends Controller
             $this->releaseCatRoomIfUnused($oldRoomId, $appointment->id);
         }
 
-        if ($newRoomId && $isActiveBoardingAppointment) {
+        if ($newRoomId && $isActiveBoardingAppointment && $roomType === 'space') {
             $this->markCatRoomOutOfService($newRoomId);
         }
 
@@ -1471,6 +1924,12 @@ class AppointmentController extends Controller
         ]);
 
         $checkIn = Checkin::where('appointment_id', $id)->first();
+        $existingFlows = [];
+        if ($checkIn && !empty($checkIn->flows)) {
+            $decodedExistingFlows = json_decode($checkIn->flows, true);
+            $existingFlows = is_array($decodedExistingFlows) ? $decodedExistingFlows : [];
+        }
+
         if (!$checkIn) {
             $checkIn = new Checkin;
             $checkIn->appointment_id = $id;
@@ -1519,6 +1978,15 @@ class AppointmentController extends Controller
 
         $checkIn->flows = json_encode($request->flows);
         $checkIn->save();
+
+        if (isBoardingService($appointment->service)) {
+            $previousFleaTickAmount = floatval(getBoardingFleaTickBreakdown($appointment, $existingFlows)['amount'] ?? 0);
+            $currentFleaTickAmount = floatval(getBoardingFleaTickBreakdown($appointment, $request->flows)['amount'] ?? 0);
+
+            $baseEstimatedPrice = max(0, floatval($appointment->estimated_price ?? 0) - $previousFleaTickAmount);
+            $appointment->estimated_price = round($baseEstimatedPrice + $currentFleaTickAmount, 2);
+            $appointment->save();
+        }
 
         if (isPrivateTrainingService($appointment->service) && $checkIn->flows) {
             $flows = json_decode($checkIn->flows, true);
@@ -2255,7 +2723,50 @@ class AppointmentController extends Controller
         appointment_audit_log($appointment->id, "Invoice status changed to " . ucfirst($invoice->status) . ". Invoice #{$invoice->invoice_number}.");
 
         // Save invoice items
-        $items = $request->items;
+        $items = is_array($request->items) ? $request->items : [];
+
+        if (isBoardingService($appointment->service)) {
+            $checkin = Checkin::where('appointment_id', $appointment->id)->first();
+            $checkinFlows = [];
+            if ($checkin && !empty($checkin->flows)) {
+                $decodedCheckinFlows = json_decode($checkin->flows, true);
+                $checkinFlows = is_array($decodedCheckinFlows) ? $decodedCheckinFlows : [];
+            }
+
+            $fleaTickFee = floatval(getBoardingFleaTickBreakdown($appointment, $checkinFlows)['amount'] ?? 0);
+
+            $normalizedItems = [];
+            $hasFleaTickItem = false;
+
+            foreach ($items as $itemData) {
+                $description = trim((string) ($itemData['description'] ?? ''));
+                $isFleaTickItem = strcasecmp($description, 'Flea/Tick Fee') === 0;
+
+                if ($isFleaTickItem) {
+                    $hasFleaTickItem = true;
+                    if ($fleaTickFee <= 0) {
+                        continue;
+                    }
+
+                    $itemData['description'] = 'Flea/Tick Fee';
+                    $itemData['price'] = $fleaTickFee;
+                    $itemData['type'] = 'service';
+                }
+
+                $normalizedItems[] = $itemData;
+            }
+
+            if ($fleaTickFee > 0 && !$hasFleaTickItem) {
+                $normalizedItems[] = [
+                    'description' => 'Flea/Tick Fee',
+                    'price' => $fleaTickFee,
+                    'type' => 'service',
+                ];
+            }
+
+            $items = $normalizedItems;
+        }
+
         $itemsForEmail = [];
         if ($items && is_array($items)) {
             // Delete existing items
@@ -2290,11 +2801,11 @@ class AppointmentController extends Controller
             $transaction->payment_method = $request->payment_method;
             $transaction->notes = $request->payment_notes;
             $transaction->save();
-            $this->sendInvoiceEmail($invoice, $appointment, $request->items, $discountInfo);
+            $this->sendInvoiceEmail($invoice, $appointment, $items, $discountInfo);
         }
 
         if ($request->status === 'sent' || ($request->status === 'paid' && $request->payment_amount)) {
-            $this->sendInvoiceEmail($invoice, $appointment, $request->items, $discountInfo);
+            $this->sendInvoiceEmail($invoice, $appointment, $items, $discountInfo);
         }
 
         return response()->json([
@@ -2309,6 +2820,13 @@ class AppointmentController extends Controller
         $mainServiceItems = [];
         $additionalServiceItems = [];
         $inventoryItems = [];
+
+        $checkin = Checkin::where('appointment_id', $appointment->id)->first();
+        $checkinFlows = [];
+        if ($checkin && $checkin->flows) {
+            $decodedFlows = json_decode($checkin->flows, true);
+            $checkinFlows = is_array($decodedFlows) ? $decodedFlows : [];
+        }
 
         $appointment->load('service.category');
         $mainServiceName = $appointment->service->name ?? '';
@@ -2329,6 +2847,29 @@ class AppointmentController extends Controller
 
         $totalServicePrice = 0;
         $totalInventoryAmount = 0;
+
+        $fleaTickBreakdown = isBoardingService($appointment->service)
+            ? getBoardingFleaTickBreakdown($appointment, $checkinFlows)
+            : ['checked_pet_count' => 0, 'amount' => 0];
+        $fleaTickFee = floatval($fleaTickBreakdown['amount'] ?? 0);
+
+        $hasFleaTickItem = false;
+        if ($items && is_array($items)) {
+            foreach ($items as $itemData) {
+                if (trim((string) ($itemData['description'] ?? '')) === 'Flea/Tick Fee') {
+                    $hasFleaTickItem = true;
+                    break;
+                }
+            }
+        }
+
+        if ($fleaTickFee > 0 && !$hasFleaTickItem) {
+            $items = array_merge($items ?? [], [[
+                'description' => 'Flea/Tick Fee',
+                'price' => $fleaTickFee,
+                'type' => 'service',
+            ]]);
+        }
 
         if ($items && is_array($items)) {
             foreach ($items as $itemData) {
@@ -2394,6 +2935,8 @@ class AppointmentController extends Controller
             'subtotal_amount' => $subtotalAmount,
             'state_tax_rate' => $stateTaxRate,
             'state_tax_amount' => $stateTaxAmount,
+            'flea_tick_fee' => $fleaTickFee,
+            'flea_tick_checked_pet_count' => (int) ($fleaTickBreakdown['checked_pet_count'] ?? 0),
             'total' => $totalAmount,
             'total_amount' => $totalAmount
         ];
@@ -2697,6 +3240,26 @@ class AppointmentController extends Controller
                 ->where('status', 'Out of Service')
                 ->update(['status' => 'Available']);
         }
+    }
+
+    private function spaceRoomsQuery()
+    {
+        return Room::where(function ($query) {
+            $query->where('room_types', 'space')
+                ->orWhere('room_types', 'like', '%space%');
+        });
+    }
+
+    private function catRoomsQuery()
+    {
+        return $this->spaceRoomsQuery()->where(function ($query) {
+            $query->where('pet_type_labels', 'like', '%cat%');
+        });
+    }
+
+    private function availableCatRoomsQuery()
+    {
+        return $this->catRoomsQuery()->where('status', 'Available');
     }
 
     public function updateStatus(Request $request, $id, AppointmentBookingNotifier $bookingNotifier)

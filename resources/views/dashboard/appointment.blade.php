@@ -243,6 +243,21 @@
       <span class="badge badge-ghost badge-xs">incl. {{ number_format($appointmentStateTaxRate, 2) }}% tax</span>
       @endif
     </div>
+    @php
+      $appointmentCheckin = $checkedIn ?? null;
+      $appointmentFleaTickFlows = $appointmentCheckin && !empty($appointmentCheckin->flows)
+        ? (is_array($appointmentCheckin->flows) ? $appointmentCheckin->flows : json_decode($appointmentCheckin->flows, true))
+        : [];
+      $appointmentFleaTickBreakdown = isBoardingService($appointment->service)
+        ? getBoardingFleaTickBreakdown($appointment, is_array($appointmentFleaTickFlows) ? $appointmentFleaTickFlows : [])
+        : ['amount' => 0];
+    @endphp
+    @if (!empty($appointmentFleaTickBreakdown['amount']))
+    <div class="flex items-center gap-2">
+      <p class="font-medium">Flea/Tick Fee: </p>
+      <p class="text-base-content/70">${{ number_format($appointmentFleaTickBreakdown['amount'], 2) }}</p>
+    </div>
+    @endif
     @endif
     @if (isGroupClassService($appointment->service) && isset($appointment->class_name))
     <div class="xl:col-span-2 flex items-center gap-2">
@@ -1178,6 +1193,27 @@
                         <td></td>
                       </tr>
                       @endif
+                      @php
+                        $checkedInFlowsForPricing = [];
+                        if ($checkedIn && !empty($checkedIn->flows)) {
+                          if (is_array($checkedIn->flows)) {
+                            $checkedInFlowsForPricing = $checkedIn->flows;
+                          } else {
+                            $decodedCheckedInFlowsForPricing = json_decode($checkedIn->flows, true);
+                            $checkedInFlowsForPricing = is_array($decodedCheckedInFlowsForPricing) ? $decodedCheckedInFlowsForPricing : [];
+                          }
+                        }
+
+                        $boardingFleaTickBreakdown = isBoardingService($appointment->service)
+                          ? getBoardingFleaTickBreakdown($appointment, $checkedInFlowsForPricing)
+                          : ['checked_pet_count' => 0, 'amount' => 0];
+                      @endphp
+                      <tr id="flea_tick_fee_row" class="service-row flea-tick-row" data-initial-fee="{{ number_format(($boardingFleaTickBreakdown['amount'] ?? 0), 2, '.', '') }}" style="{{ ($boardingFleaTickBreakdown['amount'] ?? 0) > 0 ? '' : 'display:none;' }}">
+                        <td>{{ $row++ }}</td>
+                        <td width="56%">Flea/Tick Fee</td>
+                        <td>${{ number_format($boardingFleaTickBreakdown['amount'] ?? 0, 2) }}</td>
+                        <td></td>
+                      </tr>
                     </tbody>
                   </table>
                   <hr class="mt-2" style="color: lightgray"/>
@@ -1190,7 +1226,7 @@
                       </tr>
                       <tr>
                         <td colspan="2" class="font-medium text-end" width="66%">Estimated Price of Services:</td>
-                        <td>${{ number_format($appointment->estimated_price, 2) }}</td>
+                        <td id="estimated_price_of_services">${{ number_format($appointment->estimated_price, 2) }}</td>
                         <td></td>
                       </tr>
                       @if ($invoice && $invoice->discount_amount)
@@ -1238,7 +1274,7 @@
                       </tr>
                       <tr>
                         <td colspan="2" class="font-medium text-end" width="66%">Total Amount:</td>
-                        <td id="grand_total_amount"></td>
+                        <td id="grand_total_amount">$0.00</td>
                         <td></td>
                       </tr>
                     </tfoot>
@@ -1468,6 +1504,7 @@
                     $petFlow = is_array($petFlow) ? $petFlow : [];
                     $fallbackPetFlow = $flows;
                     $effectivePetFlow = array_merge($fallbackPetFlow, $petFlow);
+                    $petFleaTickChecked = !empty($effectivePetFlow['flea_tick']) && ($effectivePetFlow['flea_tick'] === true || $effectivePetFlow['flea_tick'] === 'true' || $effectivePetFlow['flea_tick'] === 1 || $effectivePetFlow['flea_tick'] === '1');
 
                     $petOtherItemsDescription = $effectivePetFlow['other_items_description'] ?? '';
 
@@ -1548,6 +1585,10 @@
                     <div>
                       <p class="font-semibold mb-2 text-base">Pet Information</p>
                       <div class="space-y-3 ms-2">
+                        <label class="label cursor-pointer justify-start gap-2">
+                          <input type="checkbox" class="checkbox checkbox-sm boarding-flea-tick-checkbox" name="pet_specific[{{ $petIdKey }}][flea_tick]" value="1" data-pet-id="{{ $pet->id }}" {{ $petFleaTickChecked ? 'checked' : '' }} />
+                          <span class="label-text">Flea/Tick</span>
+                        </label>
                         <div>
                           <p class="font-medium mb-2">Items:</p>
                           <div class="mt-2">
@@ -1849,6 +1890,8 @@
                           @endphp
                           <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
                             value="{{ $estimatedPriceDisplayValue !== '' ? number_format($estimatedPriceDisplayValue, 2, '.', '') : '' }}" placeholder="Enter estimated price"
+                            data-boarding-tax-rate="{{ isBoardingService($appointment->service) ? config('billing.state_tax_rate', 7) : 0 }}"
+                            data-boarding-discount-amount="{{ $checkinDiscountAmount ?? 0 }}"
                             oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" required />
                           <span class="badge badge-ghost badge-sm">USD</span>
                         </label>
@@ -1879,7 +1922,7 @@
                       <div class="rounded-box border border-base-300 bg-base-100 p-3 text-sm text-base-content/80 space-y-2">
                         <p>
                           <span class="font-medium text-base-content">Release and waiver:</span>
-                          I understand boarding activities carry inherent risks and I release the facility, its owners, and staff from liability except where prohibited by law.
+                          I understand boarding activities carry inherent risks and that The Sunshine Spot is not liable for injury, illness, or loss during my pet’s stay, except where prohibited by law.
                         </p>
                         <p>
                           <span class="font-medium text-base-content">Authorization to treat:</span>
@@ -1890,8 +1933,12 @@
                           If I cannot be reached promptly, I consent to emergency veterinary care deemed necessary for my pet's welfare.
                         </p>
                         <p>
+                          <span class="font-medium text-base-content">Parasite and flea/tick acknowledgement:</span>
+                          I understand that if fleas, ticks, or parasites are detected during boarding, necessary treatment may be administered and related fees may apply.
+                        </p>
+                        <p>
                           <span class="font-medium text-base-content">Facility policy acknowledgement:</span>
-                          I acknowledge and agree to follow the facility's boarding policies, pickup requirements, and payment terms.
+                          I acknowledge and agree to follow the facility’s boarding policies, pickup requirements, cancellation policy, and payment terms.
                         </p>
                       </div>
                       @php
@@ -1998,6 +2045,8 @@
                     @endphp
                     <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
                       value="{{ $estimatedPriceDisplayValue !== '' ? number_format($estimatedPriceDisplayValue, 2, '.', '') : '' }}" placeholder="Enter estimated price"
+                      data-boarding-tax-rate="{{ isBoardingService($appointment->service) ? config('billing.state_tax_rate', 7) : 0 }}"
+                      data-boarding-discount-amount="{{ $checkinDiscountAmount ?? 0 }}"
                       oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" required />
                     <span class="badge badge-ghost badge-sm">USD</span>
                   </label>
@@ -3322,8 +3371,7 @@
       }
     });
 
-    // Calculate totals on page load for existing invoice items
-    updateTotals();
+    // Totals are initialized later after invoice constants are ready.
     $('#status, #issued_at, #paid_at').on('change', function() {
       updateTotals();
     });
@@ -3910,6 +3958,7 @@
 
       petSpecific[petId] = {
         other_items_description: ($section.find('.boarding-other-items-description').val() || '').trim() || null,
+        flea_tick: $section.find('.boarding-flea-tick-checkbox').is(':checked'),
         dry_food_list: dryFoodList,
         wet_food_list: wetFoodList,
         meds_list: medicationsList,
@@ -4079,6 +4128,69 @@
 
   function isTruthyBoardingValue(value) {
     return value === true || value === 'true' || value === 1 || value === '1';
+  }
+
+  const boardingEstimatedPriceInput = document.getElementById('estimated_price');
+  const boardingTaxRate = boardingEstimatedPriceInput ? parseFloat(boardingEstimatedPriceInput.dataset.boardingTaxRate || '0') : 0;
+  const boardingDiscountAmount = boardingEstimatedPriceInput ? parseFloat(boardingEstimatedPriceInput.dataset.boardingDiscountAmount || '0') : 0;
+  const boardingFleaTickUnitAmount = 50;
+  const boardingInitialFleaTickCount = document.querySelectorAll('.boarding-flea-tick-checkbox:checked').length;
+  const boardingBaseGrossBeforeFlea = (() => {
+    if (!boardingEstimatedPriceInput) {
+      return 0;
+    }
+
+    const currentPrice = parseFloat(boardingEstimatedPriceInput.value);
+    if (Number.isNaN(currentPrice)) {
+      return 0;
+    }
+
+    const taxFactor = 1 + (boardingTaxRate / 100);
+    return taxFactor > 0
+      ? ((currentPrice / taxFactor) + boardingDiscountAmount - (boardingInitialFleaTickCount * boardingFleaTickUnitAmount))
+      : (currentPrice + boardingDiscountAmount - (boardingInitialFleaTickCount * boardingFleaTickUnitAmount));
+  })();
+
+  function updateBoardingFleaTickPricing() {
+    const fleaCheckboxes = document.querySelectorAll('.boarding-flea-tick-checkbox');
+    const checkedCount = document.querySelectorAll('.boarding-flea-tick-checkbox:checked').length;
+    const hasFleaCheckboxes = fleaCheckboxes.length > 0;
+    const feeRow = document.getElementById('flea_tick_fee_row');
+
+    let feeTotal = checkedCount * boardingFleaTickUnitAmount;
+    if (!hasFleaCheckboxes && feeRow) {
+      const initialFee = parseFloat(feeRow.dataset.initialFee || '0');
+      feeTotal = Number.isNaN(initialFee) ? 0 : initialFee;
+    }
+
+    const taxFactor = 1 + (boardingTaxRate / 100);
+
+    if (boardingEstimatedPriceInput && hasFleaCheckboxes) {
+      const updatedPrice = Math.max(0, (boardingBaseGrossBeforeFlea + feeTotal - boardingDiscountAmount) * taxFactor);
+      boardingEstimatedPriceInput.value = updatedPrice.toFixed(2);
+    }
+
+    if (feeRow) {
+      const feeCell = feeRow.querySelector('td:nth-child(3)');
+      if (feeCell) {
+        feeCell.textContent = '$' + feeTotal.toFixed(2);
+      }
+      feeRow.style.display = feeTotal > 0 ? '' : 'none';
+    }
+
+    if (window.__invoiceTotalsReady === true && typeof updateTotals === 'function') {
+      updateTotals();
+    }
+  }
+
+  document.addEventListener('change', function(event) {
+    if (event.target && event.target.classList && event.target.classList.contains('boarding-flea-tick-checkbox')) {
+      updateBoardingFleaTickPricing();
+    }
+  });
+
+  if (document.querySelector('.boarding-flea-tick-checkbox') || document.getElementById('flea_tick_fee_row')) {
+    updateBoardingFleaTickPricing();
   }
 
   function validateBoardingAgreementSignature(showErrors = false) {
@@ -5058,6 +5170,11 @@
   const isBoardingInvoice = {{ isBoardingService($appointment->service) ? 'true' : 'false' }};
   let currentDiscountTitle = null;
   const invoiceCustomerFullName = @json(trim((($appointment->customer->profile->first_name ?? '') . ' ' . ($appointment->customer->profile->last_name ?? ''))) ?: ($appointment->customer->name ?? 'customer'));
+  window.__invoiceTotalsReady = true;
+  if (typeof updateTotals === 'function') {
+    updateTotals();
+  }
+
   function addInventoryItem() {
     const selectedItem = $('#inventory_item').select2('data')[0];
     if (!selectedItem) {
@@ -5164,7 +5281,7 @@
   function updateTotals(statusOverride = null, dateOverrides = {}) {
     // Calculate the Total Price of Services
     let serviceTotal = 0;
-    $('.service-row, .coat-fee-row').each(function() {
+    $('.service-row:visible, .coat-fee-row:visible').each(function() {
       const priceText = $(this).find('td:nth-child(3)').text().replace('$', '').replace(/,/g, '');
       const price = parseFloat(priceText);
       if (!isNaN(price)) {
@@ -5172,8 +5289,8 @@
       }
     });
 
-    // Calculate service total (from Blade)
-    const estimatedPrice = parseFloat('{{ $appointment->estimated_price }}');
+    // Use rendered service rows as the source of truth for service totals.
+    const estimatedPrice = serviceTotal;
 
     // Set inventory total (excluding service and additional services)
     let inventoryRowsTotal = 0;
@@ -5186,18 +5303,34 @@
     });
 
     const effectiveStatus = statusOverride || $('#status').val() || invoiceDefaultStatus;
-    const referenceDate = resolveInvoiceDiscountReferenceDate(effectiveStatus, dateOverrides);
-    const discountResult = calculateInvoiceDiscount(referenceDate, estimatedPrice);
+    const discountRow = $('#invoice_discount_row');
+    const canRenderDiscount = discountRow.length > 0;
+
+    let discountResult = { amount: 0, rule: null };
+    if (canRenderDiscount) {
+      try {
+        const referenceDate = resolveInvoiceDiscountReferenceDate(effectiveStatus, dateOverrides);
+        discountResult = calculateInvoiceDiscount(referenceDate, estimatedPrice) || { amount: 0, rule: null };
+      } catch (error) {
+        console.error('Failed to calculate invoice discount:', error);
+        discountResult = { amount: 0, rule: null };
+      }
+    }
+
     const calculatedDiscountAmount = parseFloat(discountResult.amount || 0);
-    const discountAmount = hasPersistedInvoiceDiscount
+    const discountAmount = (hasPersistedInvoiceDiscount && canRenderDiscount)
       ? Math.max(0, Math.min(estimatedPrice, persistedInvoiceDiscountAmount || 0))
       : calculatedDiscountAmount;
     const subtotalAmount = Math.max(0, estimatedPrice - discountAmount + inventoryRowsTotal);
-    const effectiveTaxRate = isBoardingInvoice ? Math.max(0, invoiceStateTaxRate || 0) : 0;
+    const hasBoardingServiceRow = $('#pricing_table tr.service-row td:nth-child(2)').filter(function() {
+      return (($(this).text() || '').trim().toLowerCase().includes('boarding'));
+    }).length > 0;
+    const effectiveTaxRate = (isBoardingInvoice || hasBoardingServiceRow) ? Math.max(0, invoiceStateTaxRate || 0) : 0;
     const stateTaxAmount = subtotalAmount * (effectiveTaxRate / 100);
     const totalAmount = subtotalAmount + stateTaxAmount;
 
     $('#total_price_of_services').text('$' + serviceTotal.toFixed(2));
+    $('#estimated_price_of_services').text('$' + estimatedPrice.toFixed(2));
     $('#inventory_total_amount').text('$' + inventoryRowsTotal.toFixed(2));
     $('#invoice_subtotal_amount').text('$' + subtotalAmount.toFixed(2));
     $('#invoice_state_tax_rate_label').text(effectiveTaxRate.toFixed(2).replace(/\.00$/, ''));
@@ -5209,7 +5342,6 @@
     }
     $('#grand_total_amount').text('$' + totalAmount.toFixed(2));
 
-    const discountRow = $('#invoice_discount_row');
     const discountTooltip = $('.js-invoice-discount-tooltip');
     const discountLabel = $('#invoice_discount_label');
     const appliedDiscountTitle = (discountResult.rule && discountResult.rule.title) ? discountResult.rule.title : null;

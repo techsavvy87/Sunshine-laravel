@@ -150,7 +150,7 @@
               <th>Image</th>
               <th>Name</th>
               <th>Assigned Pet</th>
-              <th>Type</th>
+              <th>Max Pets</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
@@ -173,11 +173,20 @@
                 @if (isset($kennel->assigned_pet_bookings) && $kennel->assigned_pet_bookings->isNotEmpty())
                   <div class="flex flex-col gap-2">
                     @foreach ($kennel->assigned_pet_bookings as $booking)
-                      <div class="rounded-box bg-base-200/40 px-2 py-1.5">
-                        <p class="text-xs text-base-content/60 mb-1">
-                          {{ \Carbon\Carbon::parse($booking->start_date)->format('M j, Y') }}
-                          -
-                          {{ \Carbon\Carbon::parse($booking->end_date)->format('M j, Y') }}
+                      @php
+                        $hasConflict = isset($booking->appointment) && isAssignmentConflict($booking->appointment);
+                      @endphp
+                      <div class="rounded-box {{ $hasConflict ? 'assignment-conflict-bg border-l-4 border-yellow-500' : 'bg-base-200/40' }} px-2 py-1.5">
+                        <p class="text-xs text-base-content/60 mb-1 flex items-center justify-between">
+                          <span>{{ \Carbon\Carbon::parse($booking->start_date)->format('M j, Y') }}
+                            -
+                            {{ \Carbon\Carbon::parse($booking->end_date)->format('M j, Y') }}</span>
+                          @if ($hasConflict)
+                            <span class="badge badge-warning badge-sm">
+                              <span class="iconify lucide--alert-circle size-3"></span>
+                              Over capacity
+                            </span>
+                          @endif
                         </p>
                         <div class="flex flex-col gap-1.5">
                           @foreach ($booking->pets as $pet)
@@ -194,12 +203,7 @@
                   <span class="text-base-content/60">No assigned pets</span>
                 @endif
               </td>
-              <td>
-                @php
-                  $typeClass = $kennel->type === 'dog' ? 'badge-info' : 'badge-secondary';
-                @endphp
-                <span class="badge badge-soft badge-sm {{ $typeClass }}">{{ ucfirst($kennel->type) }}</span>
-              </td>
+              <td>{{ $kennel->capacity }}</td>
               <td>
                 @php
                   $statusClass = match($kennel->status) {

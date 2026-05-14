@@ -78,6 +78,7 @@ class KennelController extends Controller
             $kennel->assigned_pet_bookings = $appointments->map(function ($appointment) use ($collectAppointmentPets) {
                 return (object) [
                     'appointment_id' => $appointment->id,
+                    'appointment' => $appointment,
                     'start_date' => Carbon::parse($appointment->date)->toDateString(),
                     'end_date' => $appointment->end_date
                         ? Carbon::parse($appointment->end_date)->toDateString()
@@ -305,7 +306,7 @@ class KennelController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
-            'type' => 'required|in:dog,cat',
+            'capacity' => 'required|integer|min:1',
             'status' => 'required|in:In Service,Out of Service,Cleaning',
             'temp_file' => 'nullable|string',
         ]);
@@ -322,7 +323,7 @@ class KennelController extends Controller
         $kennel = new Kennel();
         $kennel->name = $normalizedName;
         $kennel->description = $request->description;
-        $kennel->type = $request->type;
+        $kennel->capacity = (int) $request->capacity;
         $kennel->status = $request->status;
 
         if ($request->filled('temp_file')) {
@@ -356,7 +357,7 @@ class KennelController extends Controller
             'id' => 'required|exists:kennels,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:255',
-            'type' => 'required|in:dog,cat',
+            'capacity' => 'required|integer|min:1',
             'status' => 'required|in:In Service,Out of Service,Cleaning',
             'img_action' => 'required|in:keep,change,delete',
             'temp_file' => 'nullable|string',
@@ -400,7 +401,7 @@ class KennelController extends Controller
 
         $kennel->name = $normalizedName;
         $kennel->description = $request->description;
-        $kennel->type = $request->type;
+        $kennel->capacity = (int) $request->capacity;
         $kennel->status = $request->status;
 
         switch ($request->img_action) {

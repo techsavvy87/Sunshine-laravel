@@ -42,7 +42,6 @@
               <th>Image</th>
               <th>Name</th>
               <th>Assigned Kennels / Pets</th>
-              <th>Type</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
@@ -78,9 +77,18 @@
                 @if ($room->assigned_kennels->isNotEmpty())
                 <div class="space-y-2 min-w-[260px] max-w-md">
                   @foreach ($room->kennel_pet_assignments as $assignment)
-                  <div class="flex items-center gap-4 rounded-box bg-base-200/40 px-2 py-1.5">
+                  @php
+                    $hasConflict = isset($assignment->appointments) && $assignment->appointments->contains(fn($apt) => isAssignmentConflict($apt));
+                  @endphp
+                  <div class="flex items-center gap-4 rounded-box {{ $hasConflict ? 'assignment-conflict-bg border-l-4 border-yellow-500' : 'bg-base-200/40' }} px-2 py-1.5">
                     <div class="flex items-center gap-2">
                       <span class="badge badge-soft badge-sm badge-neutral shrink-0">{{ $assignment->kennel->name }}</span>
+                      @if ($hasConflict)
+                        <span class="badge badge-warning badge-sm">
+                          <span class="iconify lucide--alert-circle size-3"></span>
+                          Conflict
+                        </span>
+                      @endif
                     </div>
 
                     @if (isset($assignment->pets) && $assignment->pets->isNotEmpty())
@@ -96,19 +104,9 @@
                   </div>
                   @endforeach
                 </div>
-                @elseif (!isset($room->current_room_pets) || $room->current_room_pets->isEmpty())
+                @elseif (($room->room_types ?? '') !== 'space' && (!isset($room->current_room_pets) || $room->current_room_pets->isEmpty()))
                 <span class="text-sm text-base-content/60">No kennels assigned</span>
                 @endif
-              </td>
-              <td>
-                @php
-                  $typeClass = match($room->type) {
-                    'dog' => 'badge-info',
-                    'cat' => 'badge-secondary',
-                    default => 'badge-neutral',
-                  };
-                @endphp
-                <span class="badge badge-soft badge-sm {{ $typeClass }}">{{ ucfirst($room->type) }}</span>
               </td>
               <td>
                 @php

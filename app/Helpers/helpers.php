@@ -198,6 +198,52 @@ if (!function_exists('getBoardingPricingBreakdown')) {
     }
 }
 
+if (!function_exists('boardingValueIsTruthy')) {
+    function boardingValueIsTruthy($value): bool
+    {
+        return $value === true || $value === 'true' || $value === 1 || $value === '1';
+    }
+}
+
+if (!function_exists('getBoardingFleaTickBreakdown')) {
+    function getBoardingFleaTickBreakdown($appointment, ?array $flows = null): array
+    {
+        $pets = collect($appointment->family_pets ?? [])->filter();
+        if ($pets->isEmpty() && $appointment?->pet) {
+            $pets = collect([$appointment->pet]);
+        }
+
+        $decodedFlows = is_array($flows) ? $flows : [];
+        $petSpecific = isset($decodedFlows['pet_specific']) && is_array($decodedFlows['pet_specific'])
+            ? $decodedFlows['pet_specific']
+            : [];
+
+        $checkedPetCount = 0;
+
+        foreach ($pets as $pet) {
+            if (!$pet) {
+                continue;
+            }
+
+            $petIdKey = (string) $pet->id;
+            $petFlows = $petSpecific[$petIdKey] ?? ($petSpecific[$pet->id] ?? []);
+            if (!is_array($petFlows)) {
+                $petFlows = [];
+            }
+
+            $fleaTickValue = $petFlows['flea_tick'] ?? ($decodedFlows['flea_tick'] ?? null);
+            if (boardingValueIsTruthy($fleaTickValue)) {
+                $checkedPetCount++;
+            }
+        }
+
+        return [
+            'checked_pet_count' => $checkedPetCount,
+            'amount' => round($checkedPetCount * 50, 2),
+        ];
+    }
+}
+
 if (!function_exists('getBoardingServicePrice')) {
     function getBoardingServicePrice($service, $appointment)
     {
@@ -489,6 +535,27 @@ if (!function_exists('getServicePermissionId')) {
         }
 
         return null;
+    }
+}
+
+if (!function_exists('isAssignmentConflict')) {
+    function isAssignmentConflict($appointment)
+    {
+        if (!$appointment || !is_object($appointment)) {
+            return false;
+        }
+
+        // Safely check if metadata property exists
+        if (!isset($appointment->metadata)) {
+            return false;
+        }
+
+        $metadata = $appointment->metadata;
+        if (!is_array($metadata)) {
+            return false;
+        }
+
+        return isset($metadata['was_allowed_with_conflict']) && $metadata['was_allowed_with_conflict'] === true;
     }
 }
 

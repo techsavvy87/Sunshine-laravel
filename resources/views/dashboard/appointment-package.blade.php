@@ -84,6 +84,21 @@
       <p class="font-medium">Paid Amount: </p>
       <p class="text-base-content/70">${{ number_format($appointment->estimated_price, 2) }}</p>
     </div>
+    @php
+      $packageCheckin = $appointment->checkin;
+      $packageFlows = $packageCheckin && $packageCheckin->flows
+        ? (is_array($packageCheckin->flows) ? $packageCheckin->flows : json_decode($packageCheckin->flows, true))
+        : [];
+      $packageFleaTickBreakdown = isBoardingService($appointment->service)
+        ? getBoardingFleaTickBreakdown($appointment, is_array($packageFlows) ? $packageFlows : [])
+        : ['amount' => 0];
+    @endphp
+    @if (!empty($packageFleaTickBreakdown['amount']))
+    <div class="flex items-center gap-2">
+      <p class="font-medium">Flea/Tick Fee: </p>
+      <p class="text-base-content/70">${{ number_format($packageFleaTickBreakdown['amount'], 2) }}</p>
+    </div>
+    @endif
     @endif
   </div>
   <div class="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-12">
