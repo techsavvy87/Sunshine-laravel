@@ -84,6 +84,9 @@ class TimeSlotController extends Controller
     public function getExistingTimeSlotDates(Request $request)
     {
         $today = Carbon::today()->toDateString();
+
+        $latestTimeSlotEndDate = TimeSlot::whereDate('date', '>=', $today)
+            ->max('date');
         
         $existingDates = TimeSlot::whereDate('date', '>=', $today)
             ->selectRaw('DATE(date) as date')
@@ -107,7 +110,8 @@ class TimeSlotController extends Controller
         sort($restrictedDates);
 
         return response()->json([
-            'existing_dates' => $restrictedDates
+            'existing_dates' => $restrictedDates,
+            'latest_timeslot_end_date' => $latestTimeSlotEndDate
         ]);
     }
 

@@ -13,6 +13,8 @@ class Service extends Model
         'price_large' => 'decimal:2',
         'price_xlarge' => 'decimal:2',
         'price_per_mile' => 'decimal:2',
+        'future_price' => 'decimal:2',
+        'future_price_effective_date' => 'date',
         'duration' => 'float',
         'duration_small' => 'float',
         'duration_medium' => 'float',

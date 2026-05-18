@@ -285,7 +285,7 @@
       }
       
       const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 30);
+      endDate.setDate(endDate.getDate() + 89);
       
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
@@ -315,6 +315,7 @@
   }
 
   let existingTimeSlotDates = [];
+  let latestTimeSlotEndDate = null;
 
   function loadExistingTimeSlotDates(callback) {
     $.ajax({
@@ -327,6 +328,7 @@
         if (response.existing_dates) {
           existingTimeSlotDates = response.existing_dates;
         }
+        latestTimeSlotEndDate = response.latest_timeslot_end_date || null;
         if (callback) callback();
       },
       error: function() {
@@ -339,6 +341,49 @@
   $(document).ready(function() {
     loadExistingTimeSlotDates();
   });
+
+  function formatDateLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function getNextThreeMonthsRangeFromLatestEndDate() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let startDate = new Date(today);
+
+    if (latestTimeSlotEndDate) {
+      const [year, month, day] = latestTimeSlotEndDate.split('-').map(Number);
+      const latest = new Date(year, month - 1, day);
+      latest.setHours(0, 0, 0, 0);
+      startDate = new Date(latest);
+      startDate.setDate(startDate.getDate() + 1);
+    } else {
+      const todayStr = formatDateLocal(today);
+      if (existingTimeSlotDates.includes(todayStr)) {
+        startDate.setDate(startDate.getDate() + 1);
+        while (existingTimeSlotDates.includes(formatDateLocal(startDate))) {
+          startDate.setDate(startDate.getDate() + 1);
+        }
+      }
+    }
+
+    if (startDate < today) {
+      startDate = new Date(today);
+    }
+
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 89);
+
+    return {
+      startDateStr: formatDateLocal(startDate),
+      endDateStr: formatDateLocal(endDate),
+      todayStr: formatDateLocal(today),
+    };
+  }
 
   function showAlert(message) {
     const alert_modal = document.getElementById('alert_modal');
@@ -410,10 +455,10 @@
 
       // Calculate days including both start and end dates (add 1 for inclusive range)
       const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-      if (daysDiff > 30) {
-        showAlert('The date range cannot exceed 1 month (30 days).');
+      if (daysDiff > 90) {
+        showAlert('The date range cannot exceed 3 months (90 days).');
         const maxEndDate = new Date(start);
-        maxEndDate.setDate(maxEndDate.getDate() + 29); // 30 days total (start + 29 more)
+        maxEndDate.setDate(maxEndDate.getDate() + 89); // 90 days total (start + 89 more)
         $('#end_date').val(maxEndDate.toISOString().split('T')[0]);
         updateEndDateConstraints(startDate);
         return false;
@@ -436,7 +481,7 @@
     $('#end_date').attr('min', minEndDate.toISOString().split('T')[0]);
     
     const maxEndDate = new Date(start);
-    maxEndDate.setDate(maxEndDate.getDate() + 29); // 30 days total (start + 29 more)
+    maxEndDate.setDate(maxEndDate.getDate() + 89); // 90 days total (start + 89 more)
     $('#end_date').attr('max', maxEndDate.toISOString().split('T')[0]);
     
     const currentEndDate = $('#end_date').val();
@@ -503,9 +548,9 @@
         
         // Calculate days including both start and end dates (add 1 for inclusive range)
         const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-        if (daysDiff > 30) {
+        if (daysDiff > 90) {
           const maxEndDate = new Date(start);
-          maxEndDate.setDate(maxEndDate.getDate() + 29); // 30 days total (start + 29 more)
+          maxEndDate.setDate(maxEndDate.getDate() + 89); // 90 days total (start + 89 more)
           $('#end_date').val(maxEndDate.toISOString().split('T')[0]);
         }
       }
@@ -523,10 +568,10 @@
       
       // Calculate days including both start and end dates (add 1 for inclusive range)
       const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-      if (daysDiff > 30) {
-        showAlert('The date range cannot exceed 1 month (30 days).');
+      if (daysDiff > 90) {
+        showAlert('The date range cannot exceed 3 months (90 days).');
         const maxEndDate = new Date(start);
-        maxEndDate.setDate(maxEndDate.getDate() + 29); // 30 days total (start + 29 more)
+        maxEndDate.setDate(maxEndDate.getDate() + 89); // 90 days total (start + 89 more)
         $(this).val(maxEndDate.toISOString().split('T')[0]);
       }
     }
@@ -590,7 +635,7 @@
   function confirmGenerate() {
     const startDate = $('#start_date').val();
     const endDate = $('#end_date').val();
-    
+
     if (!startDate || !endDate) {
       showAlert('Please select both start and end dates.');
       return;
@@ -603,13 +648,12 @@
 
     const start = new Date(startDate);
     const end = new Date(endDate);
-    // Calculate days including both start and end dates (add 1 for inclusive range)
     const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-    if (daysDiff > 30) {
-      showAlert('The date range cannot exceed 1 month (30 days).');
+    if (daysDiff > 90) {
+      showAlert('The date range cannot exceed 3 months (90 days).');
       return;
     }
-    
+
     if (!validateDateRange()) {
       return;
     }

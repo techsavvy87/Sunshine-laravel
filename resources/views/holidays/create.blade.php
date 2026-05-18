@@ -23,43 +23,72 @@
       <div class="card-body">
         <div class="card-title">Holiday Information</div>
         <div class="fieldset mt-2 space-y-4">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="space-y-1">
               <label class="fieldset-label" for="holiday_name">Holiday Name*</label>
-              <input class="input w-full" id="holiday_name" name="holiday_name" type="text" placeholder="e.g. New Year's Day" value="{{ old('holiday_name') }}" required />
+              <input class="input w-full" id="holiday_name" name="holiday_name" type="text" placeholder="e.g. Christmas" value="{{ old('holiday_name') }}" required />
             </div>
             <div class="space-y-1">
-              <label class="fieldset-label" for="holiday_date">Holiday Date*</label>
-              <div class="dropdown w-full">
-                <div role="button" class="btn btn-outline border-base-300 flex items-center gap-2" tabindex="0">
-                  <span class="iconify lucide--calendar text-base-content/80 size-4.5"></span>
-                  <p class="text-start" id="button_cally_target">{{ old('holiday_date', '-') }}</p>
-                  <span class="iconify lucide--chevron-down text-base-content/70 size-4"></span>
-                </div>
-                <div class="dropdown-content mt-2" tabindex="0">
-                  <calendar-date class="cally bg-base-100 rounded-box shadow-md transition-all hover:shadow-lg" id="button_cally_element" value="{{ old('holiday_date', '-') }}" >
-                    <span class="iconify lucide--chevron-left" slot="previous"></span>
-                    <span class="iconify lucide--chevron-right" slot="next"></span>
-                    <calendar-month></calendar-month>
-                  </calendar-date>
-                </div>
-              </div>
-              <input type="hidden" id="holiday_date" name="holiday_date" value="{{ old('holiday_date', '') }}" required />
-            </div>
-            <div class="space-y-1">
-              <label class="fieldset-label" for="percent_increase">Percent Increase*</label>
-              <input
-                class="input w-full"
-                id="percent_increase"
-                name="percent_increase"
-                type="text"
-                placeholder="e.g. 10"
-                value="{{ old('percent_increase') }}"
-                oninput="this.value = this.value.replace(/[^0-9]/g, '')"
-                required
-              />
+              <label class="fieldset-label" for="fixed_price">Holiday Price (USD)*</label>
+              <label class="input w-full focus:outline-0">
+                <input class="grow focus:outline-0" id="fixed_price" name="fixed_price" type="text" placeholder="e.g. 20" value="{{ old('fixed_price') }}" oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" required />
+                <span class="badge badge-ghost badge-sm">USD</span>
+              </label>
             </div>
           </div>
+
+          <div class="divider my-2">Application Type</div>
+
+          <div class="space-y-3">
+            <div class="flex items-center gap-4">
+              <div class="flex items-center gap-2">
+                <input
+                  class="radio"
+                  type="radio"
+                  id="application_one_day"
+                  name="application_type"
+                  value="one_day"
+                  {{ old('application_type', 'one_day') === 'one_day' ? 'checked' : '' }}
+                  onchange="toggleDateFields()"
+                  required
+                />
+                <label class="fieldset-label cursor-pointer" for="application_one_day">One Day</label>
+              </div>
+              <div class="flex items-center gap-2">
+                <input
+                  class="radio"
+                  type="radio"
+                  id="application_period_days"
+                  name="application_type"
+                  value="period_days"
+                  {{ old('application_type') === 'period_days' ? 'checked' : '' }}
+                  onchange="toggleDateFields()"
+                  required
+                />
+                <label class="fieldset-label cursor-pointer" for="application_period_days">Period Days</label>
+              </div>
+            </div>
+            <p class="text-xs text-base-content/60">One Day: Price applies to a single date. Period Days: Price applies across a date range.</p>
+          </div>
+
+          <div id="date_fields_container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="one_day_field" class="space-y-1" style="display: {{ old('application_type', 'one_day') === 'one_day' ? 'block' : 'none' }};">
+              <label class="fieldset-label" for="holiday_date">Holiday Date*</label>
+              <input class="input w-full" id="holiday_date" name="holiday_date" type="date" value="{{ old('holiday_date', '') }}" />
+            </div>
+
+            <div id="period_days_fields" style="display: {{ old('application_type') === 'period_days' ? 'grid' : 'none' }};" class="grid grid-cols-2 gap-4">
+              <div class="space-y-1">
+                <label class="fieldset-label" for="period_start_date">Start Date*</label>
+                <input class="input w-full" id="period_start_date" name="holiday_date" type="date" value="{{ old('holiday_date', '') }}" />
+              </div>
+              <div class="space-y-1">
+                <label class="fieldset-label" for="end_date">End Date*</label>
+                <input class="input w-full" id="end_date" name="end_date" type="date" value="{{ old('end_date', '') }}" />
+              </div>
+            </div>
+          </div>
+
           <div class="mt-4">
             <div class="flex items-center gap-2">
               <input type="hidden" name="restrict_bookings" value="no" />
@@ -74,44 +103,6 @@
               <label class="fieldset-label cursor-pointer" for="restrict_bookings">Restrict Bookings</label>
             </div>
             <p class="text-sm text-base-content/70 mt-1">When enabled, all services will have restricted bookings on this holiday.</p>
-          </div>
-          <div class="mt-4">
-            <label class="fieldset-label mb-2">Service Max Values</label>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              @foreach($services as $service)
-              <div class="card bg-base-200 p-4">
-                <div class="space-y-3">
-                  <div>
-                    <label class="font-medium text-sm">{{ $service->name }}</label>
-                  </div>
-                  <div class="space-y-2">
-                    <input
-                      type="hidden"
-                      name="services[{{ $service->id }}][service_id]"
-                      value="{{ $service->id }}"
-                    />
-                    <div class="flex items-center gap-2">
-                      <input
-                        class="input input-sm flex-1 service-max-value"
-                        type="text"
-                        name="services[{{ $service->id }}][max_value]"
-                        placeholder="Max value"
-                        oninput="this.value = this.value.replace(/[^0-9]/g, '')"
-                      />
-                      <div class="flex items-center gap-1">
-                        <input
-                          class="checkbox checkbox-sm service-no-restriction"
-                          type="checkbox"
-                          onchange="handleNoRestrictionService(this, {{ $service->id }})"
-                        />
-                        <label class="text-xs">No Restriction</label>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              @endforeach
-            </div>
           </div>
         </div>
         <div class="mt-5 flex justify-end gap-3">
@@ -128,36 +119,69 @@
 @endsection
 
 @section('page-js')
-<script src="{{ asset('src/assets/ui-components-calendar.js') }}"></script>
-<script type="module" src="https://unpkg.com/cally"></script>
 <script>
-  document.getElementById("button_cally_element")?.addEventListener("change", (e) => {
-    const dateValue = e.target.value;
-    document.getElementById("button_cally_target").innerText = dateValue;
-    document.getElementById("holiday_date").value = dateValue;
-  })
+  function toggleDateFields() {
+    const applicationType = $('input[name="application_type"]:checked').val();
+    const oneDayField = $('#one_day_field');
+    const periodDaysFields = $('#period_days_fields');
+    const holidayDateInput = $('#holiday_date');
+    const periodStartInput = $('#period_start_date');
+    const endDateInput = $('#end_date');
 
-  function handleNoRestrictionService(checkbox, serviceId) {
-    const maxValueInput = $(`input[name="services[${serviceId}][max_value]"]`);
-    maxValueInput.prop('disabled', checkbox.checked);
-    if (checkbox.checked) {
-      maxValueInput.val('');
+    if (applicationType === 'one_day') {
+      // Show one day field
+      oneDayField.show();
+      periodDaysFields.hide();
+      
+      // Enable one day input and disable period inputs
+      holidayDateInput.prop('disabled', false).prop('required', true);
+      periodStartInput.prop('disabled', true).prop('required', false);
+      endDateInput.prop('disabled', true).prop('required', false);
+      
+      // Clear period inputs
+      periodStartInput.val('');
+      endDateInput.val('');
+    } else {
+      // Show period days fields
+      oneDayField.hide();
+      periodDaysFields.show();
+      
+      // Disable one day input and enable period inputs
+      holidayDateInput.prop('disabled', true).prop('required', false);
+      periodStartInput.prop('disabled', false).prop('required', true);
+      endDateInput.prop('disabled', false).prop('required', true);
+      
+      // Clear one day input
+      holidayDateInput.val('');
     }
   }
 
-  $('#create_form').on('submit', function(e) {
-    const holidayDate = $('#holiday_date').val();
-    if (!holidayDate || holidayDate === '-') {
-      e.preventDefault();
-      alert('Please select a holiday date.');
-      return false;
-    }
+  // Initialize on page load
+  $(document).ready(function() {
+    toggleDateFields();
+  });
 
-    // Remove disabled fields before submit
-    $('.service-max-value[disabled]').each(function() {
-      $(this).prop('disabled', false);
-      $(this).val('');
-    });
+  $('#create_form').on('submit', function(e) {
+    const applicationType = $('input[name="application_type"]:checked').val();
+    
+    if (applicationType === 'one_day') {
+      const holidayDate = $('#holiday_date').val();
+      console.log('One Day - Holiday Date:', holidayDate);
+      if (!holidayDate) {
+        e.preventDefault();
+        alert('Please select a holiday date.');
+        return false;
+      }
+    } else {
+      const startDate = $('#period_start_date').val();
+      const endDate = $('#end_date').val();
+      console.log('Period Days - Start:', startDate, 'End:', endDate);
+      if (!startDate || !endDate) {
+        e.preventDefault();
+        alert('Please select both start and end dates for the holiday period.');
+        return false;
+      }
+    }
   });
 </script>
 @endsection

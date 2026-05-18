@@ -18,6 +18,8 @@ return new class extends Migration
             $table->string('icon')->nullable();
             $table->longText('description')->nullable();
             $table->decimal('price', 10, 2)->nullable();
+            $table->decimal('future_price', 10, 2)->nullable();
+            $table->date('future_price_effective_date')->nullable();
             $table->decimal('price_small', 10, 2)->nullable();
             $table->decimal('price_medium', 10, 2)->nullable();
             $table->decimal('price_large', 10, 2)->nullable();

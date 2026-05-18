@@ -88,7 +88,7 @@ class PreCheckinController extends Controller
             $baseEstimated = (float) $computedEstimatedPrice;
         }
 
-        $boardingPricing = getBoardingPricingBreakdown($appointment);
+        $boardingPricing = getBoardingPricingBreakdown($appointment, null, $appointment->service);
         $estimatedNetPrice = max(0, $baseEstimated - floatval($boardingPricing['family_discount_amount'] ?? 0));
         $estimatedPriceWithTax = $estimatedNetPrice * (1 + ($taxRate / 100));
 
@@ -141,7 +141,7 @@ class PreCheckinController extends Controller
         $baseEstimatedPrice = $taxRate > 0
             ? ($estimatedPriceWithTax / (1 + ($taxRate / 100)))
             : $estimatedPriceWithTax;
-        $boardingPricing = getBoardingPricingBreakdown($appointment);
+        $boardingPricing = getBoardingPricingBreakdown($appointment, null, $appointment->service);
         $grossEstimatedPrice = $baseEstimatedPrice + floatval($boardingPricing['family_discount_amount'] ?? 0);
 
         if ($request->filled('staff_id')) {

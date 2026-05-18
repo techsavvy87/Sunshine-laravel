@@ -249,18 +249,23 @@
     @endif
     @if ($appointment->estimated_price)
     @php
-      if ((float)$dbEstimatedPrice > 0) {
-        $estimatedPrice = $dbEstimatedPrice;
-      } else {
-        $chauffeurServicePrices = $chauffeurPricingData['service_prices'] ?? [];
-        $estimatedPrice = $appointment->estimated_price + array_sum($chauffeurServicePrices);
-      }
-
       $appointmentStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
       $boardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
-      $estimatedDiscountAmount = floatval($boardingPricing['family_discount_amount'] ?? 0);
-      $estimatedNetPrice = max(0, $estimatedPrice - $estimatedDiscountAmount);
-      $estimatedPriceWithTax = $estimatedNetPrice + ($estimatedNetPrice * ($appointmentStateTaxRate / 100));
+
+      if ($boardingPricing) {
+        // For boarding, use the calculated total which already includes holidays and discounts
+        $estimatedPrice = floatval($boardingPricing['total']);
+      } else {
+        if ((float)$dbEstimatedPrice > 0) {
+          $estimatedPrice = $dbEstimatedPrice;
+        } else {
+          $chauffeurServicePrices = $chauffeurPricingData['service_prices'] ?? [];
+          $estimatedPrice = $appointment->estimated_price + array_sum($chauffeurServicePrices);
+        }
+      }
+
+      $estimatedNetPrice = $estimatedPrice;
+      $estimatedPriceWithTax = $estimatedNetPrice * (1 + ($appointmentStateTaxRate / 100));
     @endphp
     <div class="flex items-center gap-2">
       <p class="font-medium">Estimated Price: </p>
@@ -1947,24 +1952,26 @@
                       <fieldset class="fieldset">
                         <legend class="fieldset-legend">Estimated Price{{ isBoardingService($appointment->service) ? ' (incl. tax)' : '' }}*</legend>
                         <label class="input w-full focus:outline-0 input-sm">
-                          @php
-                            $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
-                              ? (float) $dbEstimatedPrice
-                              : (float) ($appointment->estimated_price ?? 0);
+                        @php
                             $checkinStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
                             $checkinBoardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
-                            $checkinDiscountAmount = floatval($checkinBoardingPricing['family_discount_amount'] ?? 0);
-                            $checkinNetPrice = isBoardingService($appointment->service)
-                              ? max(0, $estimatedPriceValue - $checkinDiscountAmount)
-                              : $estimatedPriceValue;
-                            $estimatedPriceDisplayValue = $estimatedPriceValue > 0
+                            
+                            if ($checkinBoardingPricing) {
+                              $checkinNetPrice = floatval($checkinBoardingPricing['total']);
+                            } else {
+                              $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
+                                ? (float) $dbEstimatedPrice
+                                : (float) ($appointment->estimated_price ?? 0);
+                              $checkinNetPrice = $estimatedPriceValue;
+                            }
+                            
+                            $estimatedPriceDisplayValue = $checkinNetPrice > 0
                               ? ($checkinNetPrice * (1 + ($checkinStateTaxRate / 100)))
                               : '';
                           @endphp
                           <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
                             value="{{ $estimatedPriceDisplayValue !== '' ? number_format($estimatedPriceDisplayValue, 2, '.', '') : '' }}" placeholder="Enter estimated price"
                             data-boarding-tax-rate="{{ isBoardingService($appointment->service) ? config('billing.state_tax_rate', 7) : 0 }}"
-                            data-boarding-discount-amount="{{ $checkinDiscountAmount ?? 0 }}"
                             oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" required />
                           <span class="badge badge-ghost badge-sm">USD</span>
                         </label>
@@ -2103,23 +2110,25 @@
                   <legend class="fieldset-legend">Estimated Price{{ isBoardingService($appointment->service) ? ' (incl. tax)' : '' }}*</legend>
                   <label class="input w-full focus:outline-0 input-sm">
                     @php
-                      $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
-                        ? (float) $dbEstimatedPrice
-                        : (float) ($appointment->estimated_price ?? 0);
                       $checkinStateTaxRate = isBoardingService($appointment->service) ? (float) config('billing.state_tax_rate', 7) : 0;
                       $checkinBoardingPricing = isBoardingService($appointment->service) ? getBoardingPricingBreakdown($appointment) : null;
-                      $checkinDiscountAmount = floatval($checkinBoardingPricing['family_discount_amount'] ?? 0);
-                      $checkinNetPrice = isBoardingService($appointment->service)
-                        ? max(0, $estimatedPriceValue - $checkinDiscountAmount)
-                        : $estimatedPriceValue;
-                      $estimatedPriceDisplayValue = $estimatedPriceValue > 0
+                      
+                      if ($checkinBoardingPricing) {
+                        $checkinNetPrice = floatval($checkinBoardingPricing['total']);
+                      } else {
+                        $estimatedPriceValue = (float) ($dbEstimatedPrice ?? 0) > 0
+                          ? (float) $dbEstimatedPrice
+                          : (float) ($appointment->estimated_price ?? 0);
+                        $checkinNetPrice = $estimatedPriceValue;
+                      }
+                      
+                      $estimatedPriceDisplayValue = $checkinNetPrice > 0
                         ? ($checkinNetPrice * (1 + ($checkinStateTaxRate / 100)))
                         : '';
                     @endphp
                     <input class="grow focus:outline-0" id="estimated_price" name="estimated_price" type="text"
                       value="{{ $estimatedPriceDisplayValue !== '' ? number_format($estimatedPriceDisplayValue, 2, '.', '') : '' }}" placeholder="Enter estimated price"
                       data-boarding-tax-rate="{{ isBoardingService($appointment->service) ? config('billing.state_tax_rate', 7) : 0 }}"
-                      data-boarding-discount-amount="{{ $checkinDiscountAmount ?? 0 }}"
                       oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" required />
                     <span class="badge badge-ghost badge-sm">USD</span>
                   </label>
@@ -2957,6 +2966,46 @@
   const customer_email_modal = document.getElementById('customer_email_modal');
   const notify_modal = document.getElementById('notify_modal');
   const payment_modal = document.getElementById('payment_modal');
+  const appointmentDate = "{{ $appointment->date ? \Carbon\Carbon::parse($appointment->date)->format('Y-m-d') : '' }}";
+  const appointmentStartTime = "{{ $appointment->start_time ? \Carbon\Carbon::parse($appointment->start_time)->format('H:i:s') : '' }}";
+  const LATE_CANCELLATION_MESSAGE = 'This cancellation is within 24 hours of the appointment check-in time. Late cancellations may incur an additional fee. Do you want to continue?';
+
+  function parseAppointmentCheckinDateTime(dateValue, timeValue) {
+    if (!dateValue || !timeValue) {
+      return null;
+    }
+
+    const dateParts = dateValue.split('-').map(Number);
+    const timeParts = timeValue.split(':').map(Number);
+
+    if (dateParts.length !== 3 || timeParts.length < 2) {
+      return null;
+    }
+
+    const [year, month, day] = dateParts;
+    const [hour, minute] = timeParts;
+    const second = timeParts[2] ?? 0;
+    const checkinDateTime = new Date(year, month - 1, day, hour, minute, second);
+
+    if (Number.isNaN(checkinDateTime.getTime())) {
+      return null;
+    }
+
+    return checkinDateTime;
+  }
+
+  function requiresLateCancellationModal(dateValue, timeValue) {
+    const checkinDateTime = parseAppointmentCheckinDateTime(dateValue, timeValue);
+
+    if (!checkinDateTime) {
+      return true;
+    }
+
+    const millisecondsUntilCheckin = checkinDateTime.getTime() - Date.now();
+    const twentyFourHoursInMilliseconds = 24 * 60 * 60 * 1000;
+
+    return millisecondsUntilCheckin <= twentyFourHoursInMilliseconds;
+  }
 
   $(document).ready(function() {
     const clickTooltipSelector = '.js-click-tooltip';
@@ -3589,23 +3638,30 @@
     const selectedStatus = $('#appointment_status').val();
     const currentStatus = '{{ $appointment->status }}';
 
-    if (selectedStatus === 'cancelled' || selectedStatus === 'no_show') {
-      const statusText = selectedStatus === 'cancelled' ? 'Cancel' : 'Mark as no show';
-      $('#confirm_message').text(`Are you sure you want to ${statusText} this appointment?`);
+    if (selectedStatus === 'cancelled') {
+      const requiresModal = requiresLateCancellationModal(appointmentDate, appointmentStartTime);
 
-      // $('#confirm_status_button').off('click').on('click', function() {
-      //   confirm_modal.close();
-      //   updateAppointmentStatus(selectedStatus, true).then(function() {
-      //     window.location.href = '{{ route("archives") }}';
-      //   }).catch(function() {
-      //   });
-      // });
+      if (!requiresModal) {
+        updateAppointmentStatus(selectedStatus, true);
+        return;
+      }
 
+      $('#confirm_message').text(LATE_CANCELLATION_MESSAGE);
       confirm_modal.showModal();
       $('#confirm_status_button').off('click').on('click', function() {
         confirm_modal.close();
         updateAppointmentStatus(selectedStatus, true);
-      })
+      });
+      return;
+    }
+
+    if (selectedStatus === 'no_show') {
+      $('#confirm_message').text('Are you sure you want to mark as no show this appointment?');
+      confirm_modal.showModal();
+      $('#confirm_status_button').off('click').on('click', function() {
+        confirm_modal.close();
+        updateAppointmentStatus(selectedStatus, true);
+      });
     } else {
       proceedWithConfirm();
     }

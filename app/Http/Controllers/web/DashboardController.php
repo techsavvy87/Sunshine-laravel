@@ -239,7 +239,7 @@ class DashboardController extends Controller
                 $baseEstimatedPrice = floatval($appointment->estimated_price ?? 0);
 
                 if ($isBoarding) {
-                    $boardingPricing = getBoardingPricingBreakdown($appointment);
+                    $boardingPricing = getBoardingPricingBreakdown($appointment, null, $appointment->service);
                     $discountAmount = floatval($boardingPricing['family_discount_amount'] ?? 0);
                     $subtotalAfterDiscount = max(0, $baseEstimatedPrice - $discountAmount);
                     $appointment->total_price = $subtotalAfterDiscount + ($subtotalAfterDiscount * ($stateTaxRate / 100));
@@ -533,7 +533,7 @@ class DashboardController extends Controller
             ->values();
 
         $boardingPricing = isBoardingService($appointment->service)
-            ? getBoardingPricingBreakdown($appointment)
+            ? getBoardingPricingBreakdown($appointment, null, $appointment->service)
             : null;
 
         if (($boardingPricing['family_discount_amount'] ?? 0) > 0) {

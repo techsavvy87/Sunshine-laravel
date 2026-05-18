@@ -15,7 +15,9 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->date('date');
-            $table->unsignedInteger('percent_increase')->default(0);
+            $table->decimal('fixed_price', 10, 2)->default(0);
+            $table->enum('application_type', ['one_day', 'period_days'])->default('one_day');
+            $table->date('end_date')->nullable();
             $table->enum('restrict_bookings', ['yes', 'no'])->default('no');
             $table->timestamps();
         });

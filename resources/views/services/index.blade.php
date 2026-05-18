@@ -72,6 +72,8 @@
               <th>Category</th>
               <th style="text-align:center">Level</th>
               <th style="text-align:center">Status</th>
+              <th>Future Price</th>
+              <th>Effective Date</th>
               <th style="text-align:center">Action</th>
             </tr>
           </thead>
@@ -124,6 +126,20 @@
                   <span class="badge badge-soft badge-success">Active</span>
                 @else
                   <span class="badge badge-soft badge-error">Inactive</span>
+                @endif
+              </td>
+              <td>
+                @if($service->future_price)
+                  ${{ number_format($service->future_price, 2) }}
+                @else
+                  <span class="text-gray-500">—</span>
+                @endif
+              </td>
+              <td>
+                @if($service->future_price_effective_date)
+                  {{ $service->future_price_effective_date->format('m/d/Y') }}
+                @else
+                  <span class="text-gray-500">—</span>
                 @endif
               </td>
               <td style="text-align:center">

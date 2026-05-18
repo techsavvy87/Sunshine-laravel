@@ -179,7 +179,7 @@ class PaymentController extends Controller
                 'amount' => $appointment->invoice->discount_amount
             ];
         } elseif (isBoardingService($appointment->service)) {
-            $boardingPricing = getBoardingPricingBreakdown($appointment);
+            $boardingPricing = getBoardingPricingBreakdown($appointment, null, $appointment->service);
             if (($boardingPricing['family_discount_amount'] ?? 0) > 0) {
                 $result['discount'] = [
                     'title' => $boardingPricing['family_discount_title'] ?? 'Multi-Pet Discount',
@@ -525,7 +525,7 @@ class PaymentController extends Controller
         $chauffeurPricingData = buildChauffeurPricingData($appointment);
         $chauffeurServicePrices = $chauffeurPricingData['service_prices'] ?? [];
 
-        $resolveAppointmentServicePrice = function ($service, $petSize, $metadata = null) use ($chauffeurServicePrices) {
+        $resolveAppointmentServicePrice = function ($service, $petSize, $metadata = null, $referenceDate = null) use ($chauffeurServicePrices) {
             if (!$service) {
                 return 0;
             }
@@ -534,13 +534,14 @@ class PaymentController extends Controller
                 return floatval($chauffeurServicePrices[$service->id]);
             }
 
-            return getServicePrice($service, $petSize, $metadata);
+            return getServicePrice($service, $petSize, $metadata, $referenceDate);
         };
 
         $estimatedTotal = 0;
         $petSize = $appointment->pet->size ?? 'medium';
         $isGroupClasses = isGroupClassService($appointment->service);
         $isAlaCarte = isAlaCarteService($appointment->service);
+        $referenceDate = $appointment->date ?? now();
 
         $groupClassIds = [];
         if ($isGroupClasses && $appointment->metadata && isset($appointment->metadata['group_class_ids'])) {
@@ -564,7 +565,7 @@ class PaymentController extends Controller
                 if (!empty($serviceId)) {
                     $service = Service::find($serviceId);
                     if ($service) {
-                        $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize);
+                        $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize, null, $referenceDate);
                     }
                 }
             }
@@ -583,7 +584,7 @@ class PaymentController extends Controller
             foreach ($additionalServiceIds as $serviceId) {
                 $service = Service::find($serviceId);
                 if ($service) {
-                    $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize);
+                    $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize, null, $referenceDate);
                 }
             }
         } else {
@@ -599,17 +600,17 @@ class PaymentController extends Controller
                     $priceAppointment = clone $appointment;
                     $priceAppointment->pet_id = $pet->id ?? $appointment->pet_id;
 
-                    $boardingPrice = getBoardingServicePrice($appointment->service, $priceAppointment);
+                    $boardingPrice = getBoardingServicePrice($appointment->service, $priceAppointment, $appointment->service);
                     $petTotal = $boardingPrice !== null
                         ? $boardingPrice
-                        : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+                        : $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata, $referenceDate);
 
                     $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
                     foreach ($additionalServiceIds as $serviceId) {
                         if (!empty($serviceId)) {
                             $service = Service::find($serviceId);
                             if ($service) {
-                                $petTotal += $resolveAppointmentServicePrice($service, $petSize);
+                                $petTotal += $resolveAppointmentServicePrice($service, $petSize, null, $referenceDate);
                             }
                         }
                     }
@@ -617,14 +618,14 @@ class PaymentController extends Controller
                     $estimatedTotal += $petTotal;
                 }
             } else {
-                $estimatedTotal = $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata);
+                $estimatedTotal = $resolveAppointmentServicePrice($appointment->service, $petSize, $appointment->metadata, $referenceDate);
 
                 $additionalServiceIds = explode(',', $appointment->additional_service_ids ?? '');
                 foreach ($additionalServiceIds as $serviceId) {
                     if (!empty($serviceId)) {
                         $service = Service::find($serviceId);
                         if ($service) {
-                            $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize);
+                            $estimatedTotal += $resolveAppointmentServicePrice($service, $petSize, null, $referenceDate);
                         }
                     }
                 }

@@ -9,13 +9,17 @@ class Holiday extends Model
     protected $fillable = [
         'name',
         'date',
-        'percent_increase',
+        'fixed_price',
+        'application_type',
+        'end_date',
         'restrict_bookings',
     ];
 
     protected $casts = [
         'date' => 'date',
-        'percent_increase' => 'integer',
+        'fixed_price' => 'decimal:2',
+        'application_type' => 'string',
+        'end_date' => 'date',
     ];
 
     /**

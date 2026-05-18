@@ -50,34 +50,25 @@ class HolidayController extends Controller
         $request->validate([
             'holiday_name' => 'required|string',
             'holiday_date' => 'required|string',
-            'percent_increase' => 'integer|min:0|max:100',
+            'fixed_price' => 'required|numeric|min:0',
+            'application_type' => 'required|in:one_day,period_days',
+            'end_date' => 'nullable|date|after:holiday_date',
             'restrict_bookings' => 'nullable|in:yes,no',
-            'services' => 'nullable|array',
-            'services.*.service_id' => 'required|integer|exists:services,id',
-            'services.*.max_value' => 'nullable|integer|min:0',
         ]);
+
+        // Validate that end_date is provided when application_type is period_days
+        if ($request->application_type === 'period_days' && !$request->end_date) {
+            return back()->withErrors(['end_date' => 'End date is required when using Period Days']);
+        }
 
         $holiday = new Holiday;
         $holiday->name = $request->holiday_name;
         $holiday->date = Carbon::parse($request->holiday_date);
-        $holiday->percent_increase = $request->percent_increase;
+        $holiday->fixed_price = $request->fixed_price;
+        $holiday->application_type = $request->application_type;
+        $holiday->end_date = $request->application_type === 'period_days' ? Carbon::parse($request->end_date) : null;
         $holiday->restrict_bookings = $request->restrict_bookings ?? 'no';
         $holiday->save();
-
-        if ($request->has('services') && is_array($request->services)) {
-            foreach ($request->services as $serviceData) {
-                if (isset($serviceData['service_id'])) {
-                    $service = Service::find($serviceData['service_id']);
-                    if ($service && !isBoardingService($service) && !isAlaCarteService($service) && !isGroupClassService($service) && !isPackageService($service)) {
-                        HolidayService::create([
-                            'holiday_id' => $holiday->id,
-                            'service_id' => $serviceData['service_id'],
-                            'max_value' => isset($serviceData['max_value']) && $serviceData['max_value'] !== '' ? $serviceData['max_value'] : null,
-                        ]);
-                    }
-                }
-            }
-        }
 
         return redirect()->route('holidays')->with([
             'message' => 'Holiday created successfully!',
@@ -91,36 +82,25 @@ class HolidayController extends Controller
             'holiday_id' => 'required|integer|exists:holidays,id',
             'holiday_name' => 'required|string',
             'holiday_date' => 'required|string',
-            'percent_increase' => 'integer|min:0|max:100',
+            'fixed_price' => 'required|numeric|min:0',
+            'application_type' => 'required|in:one_day,period_days',
+            'end_date' => 'nullable|date|after:holiday_date',
             'restrict_bookings' => 'nullable|in:yes,no',
-            'services' => 'nullable|array',
-            'services.*.service_id' => 'required|integer|exists:services,id',
-            'services.*.max_value' => 'nullable|integer|min:0',
         ]);
+
+        // Validate that end_date is provided when application_type is period_days
+        if ($request->application_type === 'period_days' && !$request->end_date) {
+            return back()->withErrors(['end_date' => 'End date is required when using Period Days']);
+        }
 
         $holiday = Holiday::find($request->holiday_id);
         $holiday->name = $request->holiday_name;
         $holiday->date = Carbon::parse($request->holiday_date);
-        $holiday->percent_increase = $request->percent_increase;
+        $holiday->fixed_price = $request->fixed_price;
+        $holiday->application_type = $request->application_type;
+        $holiday->end_date = $request->application_type === 'period_days' ? Carbon::parse($request->end_date) : null;
         $holiday->restrict_bookings = $request->restrict_bookings ?? 'no';
         $holiday->save();
-
-        HolidayService::where('holiday_id', $holiday->id)->delete();
-
-        if ($request->has('services') && is_array($request->services)) {
-            foreach ($request->services as $serviceData) {
-                if (isset($serviceData['service_id'])) {
-                    $service = Service::find($serviceData['service_id']);
-                    if ($service && !isBoardingService($service) && !isAlaCarteService($service) && !isGroupClassService($service) && !isPackageService($service)) {
-                        HolidayService::create([
-                            'holiday_id' => $holiday->id,
-                            'service_id' => $serviceData['service_id'],
-                            'max_value' => isset($serviceData['max_value']) && $serviceData['max_value'] !== '' ? $serviceData['max_value'] : null,
-                        ]);
-                    }
-                }
-            }
-        }
 
         return redirect()->route('holidays')->with([
             'message' => 'Holiday updated successfully!',

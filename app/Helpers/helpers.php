@@ -1,8 +1,62 @@
 <?php
 
+if (!function_exists('getPriceForDate')) {
+    function getPriceForDate($service, $date = null) {
+        $referenceDate = $date ? \Carbon\Carbon::parse($date) : \Carbon\Carbon::now();
+        
+        // Check if future price is set and effective date has passed
+        if (!is_null($service->future_price) && !is_null($service->future_price_effective_date)) {
+            $effectiveDate = \Carbon\Carbon::parse($service->future_price_effective_date);
+            if ($referenceDate->greaterThanOrEqualTo($effectiveDate)) {
+                return floatval($service->future_price);
+            }
+        }
+        
+        // Otherwise return current price
+        return floatval($service->price ?? 0);
+    }
+}
+
+if (!function_exists('getHolidayPriceAddition')) {
+    /**
+     * Check if a given date falls within a holiday period and return the holiday price addition
+     * 
+     * @param \Carbon\Carbon|string $date The date to check
+     * @return float The holiday price to add (0 if no holiday applies)
+     */
+    function getHolidayPriceAddition($date) {
+        $checkDate = $date instanceof \Carbon\Carbon ? $date : \Carbon\Carbon::parse($date);
+        
+        // Find holidays that apply to this date
+        $holiday = \App\Models\Holiday::where(function ($query) {
+                $query->where('restrict_bookings', 'no')
+                    ->orWhere('restrict_bookings', '0')
+                    ->orWhere('restrict_bookings', 0)
+                    ->orWhereNull('restrict_bookings');
+            })
+            ->where(function ($query) use ($checkDate) {
+                // For one-day holidays, match exact date
+                $query->where(function ($q) use ($checkDate) {
+                    $q->where('application_type', 'one_day')
+                                            ->whereDate('date', $checkDate->toDateString());
+                })
+                // For period holidays, check if date falls within the range
+                ->orWhere(function ($q) use ($checkDate) {
+                    $q->where('application_type', 'period_days')
+                                            ->whereDate('date', '<=', $checkDate->toDateString())
+                                            ->whereDate('end_date', '>=', $checkDate->toDateString());
+                });
+            })
+            ->first();
+        
+        return $holiday ? floatval($holiday->fixed_price) : 0;
+    }
+}
+
 if (!function_exists('getServicePrice')) {
-    function getServicePrice($service, $petSize, $metadata = null) {
-        $base = floatval($service->price ?? 0);
+    function getServicePrice($service, $petSize, $metadata = null, $referenceDate = null) {
+        // Determine which price to use (current or future based on date)
+        $base = getPriceForDate($service, $referenceDate);
         $priceSmall = isset($service->price_small) ? floatval($service->price_small) : null;
         $priceMedium = isset($service->price_medium) ? floatval($service->price_medium) : null;
         $priceLarge = isset($service->price_large) ? floatval($service->price_large) : null;
@@ -171,13 +225,43 @@ if (!function_exists('getBoardingFamilyPetCount')) {
 }
 
 if (!function_exists('getBoardingPricingBreakdown')) {
-    function getBoardingPricingBreakdown($appointment, ?int $petCountOverride = null): array
+    function getBoardingPricingBreakdown($appointment, ?int $petCountOverride = null, $service = null): array
     {
-        $nightlyRate = 45.0;
+        // Get the service if not provided
+        if (!$service) {
+            $service = $appointment->service ?? \App\Models\Service::find($appointment->service_id);
+        }
+
+        $nightlyRate = $service ? getPriceForDate($service, $appointment->date) : 45.0;
         $nights = getBoardingNightCount($appointment);
         $petCount = getBoardingFamilyPetCount($appointment, $petCountOverride);
-        $boardingSubtotal = round($petCount * $nightlyRate * $nights, 2);
 
+        // Calculate per-night boarding subtotal and holiday adjustment.
+        // Holiday fixed price replaces the nightly base for matching nights.
+        $boardingSubtotal = 0;
+        $holidaySurcharge = 0;
+
+        if ($nights > 0) {
+            $currentDate = \Carbon\Carbon::parse($appointment->date)->startOfDay();
+            $pickupDate = \Carbon\Carbon::parse($appointment->end_date)->startOfDay();
+
+            while ($currentDate->lessThan($pickupDate)) {
+                $baseNightlyRate = $service
+                    ? getPriceForDate($service, $currentDate)
+                    : $nightlyRate;
+
+                $boardingSubtotal += round($petCount * $baseNightlyRate, 2);
+
+                $holidayFixedPrice = getHolidayPriceAddition($currentDate);
+                if ($holidayFixedPrice > 0) {
+                    $holidaySurcharge += round($petCount * ($holidayFixedPrice - $baseNightlyRate), 2);
+                }
+
+                $currentDate->addDay();
+            }
+        }
+
+        // Calculate family discount
         $discountPerNight = match ($petCount) {
             2 => 10.0,
             3 => 20.0,
@@ -193,7 +277,9 @@ if (!function_exists('getBoardingPricingBreakdown')) {
             'boarding_subtotal' => $boardingSubtotal,
             'family_discount_title' => $familyDiscount > 0 ? 'Multi-Pet Discount' : null,
             'family_discount_amount' => $familyDiscount,
-            'total' => round(max(0, $boardingSubtotal - $familyDiscount), 2),
+            'holiday_surcharge_title' => $holidaySurcharge > 0 ? 'Holiday Surcharge' : null,
+            'holiday_surcharge_amount' => $holidaySurcharge,
+            'total' => round(max(0, $boardingSubtotal - $familyDiscount + $holidaySurcharge), 2),
         ];
     }
 }
@@ -245,15 +331,16 @@ if (!function_exists('getBoardingFleaTickBreakdown')) {
 }
 
 if (!function_exists('getBoardingServicePrice')) {
-    function getBoardingServicePrice($service, $appointment)
+    function getBoardingServicePrice($service, $appointment, $serviceOverride = null)
     {
         if (!isBoardingService($service)) {
             return null;
         }
 
-        $pricing = getBoardingPricingBreakdown($appointment, 1);
+        $pricingService = $serviceOverride ?? $service;
+        $pricing = getBoardingPricingBreakdown($appointment, 1, $pricingService);
 
-        return $pricing['boarding_subtotal'];
+        return $pricing['total'];
     }
 }
 

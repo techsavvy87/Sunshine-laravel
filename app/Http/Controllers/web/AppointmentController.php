@@ -3220,7 +3220,7 @@ class AppointmentController extends Controller
         }
 
         $boardingPricing = isBoardingService($appointment->service)
-            ? getBoardingPricingBreakdown($appointment)
+            ? getBoardingPricingBreakdown($appointment, null, $appointment->service)
             : null;
         $resolvedDiscountAmount = floatval($request->discount_amount ?? 0);
         $resolvedDiscountTitle = $request->discount_title ?? '';

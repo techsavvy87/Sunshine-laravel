@@ -45,8 +45,9 @@
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Date</th>
-                    <th>Percent <br>Increase</th>
+                    <th>Date(s)</th>
+                    <th>Price</th>
+                    <th>Type</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -54,8 +55,21 @@
                   @foreach ($holiday as $index => $item)
                   <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap">
                     <td>{{ $item->name }}</td>
-                    <td>{{ $item->date->format('Y-m-d') }}</td>
-                    <td>{{ $item->percent_increase }}%</td>
+                    <td>
+                      @if ($item->application_type === 'one_day')
+                        {{ $item->date->format('Y-m-d') }}
+                      @else
+                        {{ $item->date->format('Y-m-d') }} - {{ $item->end_date->format('Y-m-d') }}
+                      @endif
+                    </td>
+                    <td>${{ number_format($item->fixed_price, 2) }}</td>
+                    <td>
+                      @if ($item->application_type === 'one_day')
+                        <span class="badge badge-outline">One Day</span>
+                      @else
+                        <span class="badge badge-outline">Period</span>
+                      @endif
+                    </td>
                     <td>
                       <div class="inline-flex w-fit">
                         @if (hasPermission(7, 'can_update'))

@@ -241,6 +241,28 @@
               </div>
               <div class="xl:col-span-4">
                 <div class="space-y-2">
+                  <label class="fieldset-label">Future Pricing</label>
+                  <div class="flex items-center gap-3">
+                    <input class="toggle toggle-sm" id="enable_future_price" type="checkbox" name="enable_future_price" value="1" {{ $service->future_price ? 'checked' : '' }} onchange="toggleFuturePriceFields()" />
+                    <label class="label" for="enable_future_price">Enable future price schedule</label>
+                  </div>
+                </div>
+              </div>
+              <div id="future_price_fields" class="xl:col-span-4 grid grid-cols-1 gap-4 xl:grid-cols-2 {{ $service->future_price ? '' : 'hidden' }}">
+                <div class="space-y-2">
+                  <label class="fieldset-label" for="future_price">New Price (USD)*</label>
+                  <label class="input w-full focus:outline-0">
+                    <input class="grow focus:outline-0" placeholder="e.g. 55" id="future_price" name="future_price" type="text" oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');" value="{{ $service->future_price }}"/>
+                    <span class="badge badge-ghost badge-sm">USD</span>
+                  </label>
+                </div>
+                <div class="space-y-2">
+                  <label class="fieldset-label" for="future_price_effective_date">Effective Date*</label>
+                  <input class="input w-full" id="future_price_effective_date" name="future_price_effective_date" type="date" value="{{ $service->future_price_effective_date ? $service->future_price_effective_date->format('Y-m-d') : '' }}" />
+                </div>
+              </div>
+              <div class="xl:col-span-4">
+                <div class="space-y-2">
                   <label class="fieldset-label" for="notes">Description</label>
                   <textarea placeholder="Type here" class="textarea w-full" name="description" value="{{ $service->description }}">{{ $service->description }}</textarea>
                 </div>
@@ -620,6 +642,23 @@
       }
 
       $('#update_form').submit();
+    }
+
+    function toggleFuturePriceFields() {
+      const isEnabled = $('#enable_future_price').is(':checked');
+      const fieldsDiv = $('#future_price_fields');
+      const futurePrice = $('#future_price');
+      const effectiveDate = $('#future_price_effective_date');
+
+      if (isEnabled) {
+        fieldsDiv.removeClass('hidden');
+        futurePrice.prop('required', true);
+        effectiveDate.prop('required', true);
+      } else {
+        fieldsDiv.addClass('hidden');
+        futurePrice.prop('required', false).val('');
+        effectiveDate.prop('required', false).val('');
+      }
     }
   </script>
 @endsection

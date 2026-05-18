@@ -246,6 +246,45 @@
     const assignment_modal = document.getElementById('assignment_modal');
     const alert_modal = document.getElementById('alert_modal') || null;
     const appointmentDate = "{{ $appointment->date ? \Carbon\Carbon::parse($appointment->date)->format('Y-m-d') : '' }}";
+    const appointmentStartTime = "{{ $appointment->start_time ? \Carbon\Carbon::parse($appointment->start_time)->format('H:i:s') : '' }}";
+    const LATE_CANCELLATION_MESSAGE = 'This cancellation is within 24 hours of the appointment check-in time. Late cancellations may incur an additional fee. Do you want to continue?';
+
+    function parseAppointmentCheckinDateTime(dateValue, timeValue) {
+      if (!dateValue || !timeValue) {
+        return null;
+      }
+
+      const dateParts = dateValue.split('-').map(Number);
+      const timeParts = timeValue.split(':').map(Number);
+
+      if (dateParts.length !== 3 || timeParts.length < 2) {
+        return null;
+      }
+
+      const [year, month, day] = dateParts;
+      const [hour, minute] = timeParts;
+      const second = timeParts[2] ?? 0;
+      const checkinDateTime = new Date(year, month - 1, day, hour, minute, second);
+
+      if (Number.isNaN(checkinDateTime.getTime())) {
+        return null;
+      }
+
+      return checkinDateTime;
+    }
+
+    function requiresLateCancellationModal(dateValue, timeValue) {
+      const checkinDateTime = parseAppointmentCheckinDateTime(dateValue, timeValue);
+
+      if (!checkinDateTime) {
+        return true;
+      }
+
+      const millisecondsUntilCheckin = checkinDateTime.getTime() - Date.now();
+      const twentyFourHoursInMilliseconds = 24 * 60 * 60 * 1000;
+
+      return millisecondsUntilCheckin <= twentyFourHoursInMilliseconds;
+    }
 
     $(document).ready(function() {
       window.initialKennels = [
@@ -1385,16 +1424,36 @@
       const selectedStatus = $('#appointment_status').val();
       const currentStatus = '{{ $appointment->status }}';
       
-      if (selectedStatus === 'cancelled' || selectedStatus === 'no_show') {
-        const statusText = selectedStatus === 'cancelled' ? 'cancel' : 'mark as no show';
-        $('#confirm_message').text(`Are you sure you want to ${statusText} this appointment?`);
-        
+      if (selectedStatus === 'cancelled') {
+        const requiresModal = requiresLateCancellationModal(appointmentDate, appointmentStartTime);
+
+        if (!requiresModal) {
+          $('#form_status').val(selectedStatus);
+          proceedWithFormSubmission();
+          return;
+        }
+
+        $('#confirm_message').text(LATE_CANCELLATION_MESSAGE);
+
         $('#confirm_modal .btn-primary').off('click').on('click', function() {
           confirm_modal.close();
           $('#form_status').val(selectedStatus);
           proceedWithFormSubmission();
         });
-        
+
+        confirm_modal.showModal();
+        return;
+      }
+
+      if (selectedStatus === 'no_show') {
+        $('#confirm_message').text('Are you sure you want to mark as no show this appointment?');
+
+        $('#confirm_modal .btn-primary').off('click').on('click', function() {
+          confirm_modal.close();
+          $('#form_status').val(selectedStatus);
+          proceedWithFormSubmission();
+        });
+
         confirm_modal.showModal();
         return;
       } else if (selectedStatus === '' && (currentStatus === 'cancelled' || currentStatus === 'no_show')) {
