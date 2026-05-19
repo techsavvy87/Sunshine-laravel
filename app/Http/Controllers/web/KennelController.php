@@ -5,6 +5,7 @@ namespace App\Http\Controllers\web;
 use App\Http\Controllers\Controller;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Kennel;
@@ -14,6 +15,12 @@ class KennelController extends Controller
 {
     public function listKennels(Request $request)
     {
+        $activeView = $request->get('view', 'list');
+        $occupancyFilter = strtolower((string) $request->get('occupancy_filter', ''));
+        if (!in_array($occupancyFilter, ['occupied', 'available'], true)) {
+            $occupancyFilter = '';
+        }
+
         $perPage = $request->get('per_page', 20);
         $search = $request->get('search');
         $type = $request->get('type');
@@ -239,6 +246,11 @@ class KennelController extends Controller
             }
         }
 
+        if ($activeView === 'calendar' && $occupancyFilter !== '') {
+            $sortedKennels = $this->sortKennelsByFilter($kennels->getCollection(), $boardingAppointmentsByKennel, $occupancyFilter);
+            $kennels->setCollection($sortedKennels);
+        }
+
         return view('kennels.index', compact(
             'kennels',
             'search',
@@ -246,8 +258,41 @@ class KennelController extends Controller
             'status',
             'dateColumns',
             'availabilityMatrix',
-            'startDate'
+            'startDate',
+            'occupancyFilter'
         ));
+    }
+
+    private function isKennelOccupied($kennelId, Collection $boardingAppointmentsByKennel): bool
+    {
+        return $boardingAppointmentsByKennel->get($kennelId, collect())->isNotEmpty();
+    }
+
+    private function sortKennelsByFilter(Collection $kennels, Collection $boardingAppointmentsByKennel, string $filterType): Collection
+    {
+        if (!in_array($filterType, ['occupied', 'available'], true)) {
+            return $kennels;
+        }
+
+        return $kennels
+            ->values()
+            ->map(function ($kennel, $index) use ($boardingAppointmentsByKennel, $filterType) {
+                $isOccupied = $this->isKennelOccupied($kennel->id, $boardingAppointmentsByKennel);
+
+                return [
+                    'kennel' => $kennel,
+                    'index' => $index,
+                    'priority' => $filterType === 'occupied'
+                        ? ($isOccupied ? 0 : 1)
+                        : ($isOccupied ? 1 : 0),
+                ];
+            })
+            ->sortBy([
+                ['priority', 'asc'],
+                ['index', 'asc'],
+            ])
+            ->pluck('kennel')
+            ->values();
     }
 
     public function addKennel()

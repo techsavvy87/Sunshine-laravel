@@ -1980,6 +1980,12 @@ class DashboardController extends Controller
         // Process care information for each pet
         $petsCareData = [];
         $checkinFlows = is_array(optional($checkin)->flows) ? $checkin->flows : [];
+        $petSpecificFlows = isset($checkinFlows['pet_specific']) && is_array($checkinFlows['pet_specific'])
+            ? $checkinFlows['pet_specific']
+            : [];
+        $legacyPetsCareFlows = isset($checkinFlows['pets_care']) && is_array($checkinFlows['pets_care'])
+            ? $checkinFlows['pets_care']
+            : [];
 
         $resolveSelectedTimes = function (array $item) use ($isTruthy) {
             $labels = [];
@@ -2028,13 +2034,21 @@ class DashboardController extends Controller
                 ? PetBehavior::whereIn('id', $behaviorIds->all())->pluck('description')->filter()->values()->all()
                 : [];
 
-            // Get per-pet care data or use shared data
-            $petFlows = $checkinFlows;
-            
-            // Check if there's per-pet data in checkin flows
-            if (isset($checkinFlows['pets_care'][$pet->id])) {
-                $petFlows = $checkinFlows['pets_care'][$pet->id];
+            // Merge shared flows with per-pet overrides.
+            $petIdKey = (string) $pet->id;
+            $currentPetSpecificFlows = $petSpecificFlows[$petIdKey] ?? ($petSpecificFlows[$pet->id] ?? []);
+            if (!is_array($currentPetSpecificFlows)) {
+                $currentPetSpecificFlows = [];
             }
+
+            // Backward compatibility for older saved structure.
+            $currentLegacyPetFlows = $legacyPetsCareFlows[$petIdKey] ?? ($legacyPetsCareFlows[$pet->id] ?? []);
+            if (!is_array($currentLegacyPetFlows)) {
+                $currentLegacyPetFlows = [];
+            }
+
+            $petFlows = array_merge($checkinFlows, $currentLegacyPetFlows, $currentPetSpecificFlows);
+            unset($petFlows['pet_specific'], $petFlows['pets_care']);
 
             $medsFlows = is_array($petFlows['meds'] ?? null) ? $petFlows['meds'] : [];
             $medsListFlows = is_array($petFlows['meds_list'] ?? null) ? $petFlows['meds_list'] : [];

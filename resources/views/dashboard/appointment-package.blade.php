@@ -374,7 +374,7 @@
               <div class="mt-4 grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Date*</legend>
-                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? ($appointment->date ?? '') }}"/>
+                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? ($appointment->end_date ?? ($appointment->date ?? '')) }}"/>
                 </fieldset>
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Pickup Time*</legend>

@@ -145,6 +145,13 @@
 </div>
 <div class="mt-3">
   @include('layouts.alerts')
+  @php
+    $showBoardingDatesInHeader = isBoardingService($appointment->service);
+    $headerCheckinDate = $checkedIn->date ?? $appointment->date ?? null;
+    $headerCheckoutDate = $checkout->date ?? $appointment->end_date ?? $appointment->date ?? null;
+    $headerCheckinTime = $appointment->start_time ?? null;
+    $headerCheckoutTime = $appointment->end_time ?? null;
+  @endphp
   <div class="grid grid-cols-1 gap-2 xl:grid-cols-5 border border-base-300 rounded-box px-5 py-2 text-sm">
     <div class="flex items-center gap-2">
       <p class="font-medium">Service: </p>
@@ -163,15 +170,17 @@
       @endif
     </div>
     <div class="flex items-center gap-2">
-      <p class="font-medium">Date: </p>
-      <p class="text-base-content/70">{{ $appointment->date ? \Carbon\Carbon::parse($appointment->date)->format('F j, Y') : 'N/A' }}</p>
+      <p class="font-medium">Check-in:</p>
+      @if($showBoardingDatesInHeader && $headerCheckinDate)
+        <p class="text-base-content/70">{{ \Carbon\Carbon::parse($headerCheckinDate)->format('M j, Y') }}{{ $headerCheckinTime ? ', ' . \Carbon\Carbon::parse($headerCheckinTime)->format('g:i A') : '' }}</p>
+      @else
+        <p class="text-base-content/70">N/A</p>
+      @endif
     </div>
     <div class="flex items-center gap-2">
-      <p class="font-medium">Time: </p>
-      @if($appointment->start_time && $appointment->end_time)
-        <p class="text-base-content/70">{{ \Carbon\Carbon::createFromFormat('H:i:s', $appointment->start_time)->format('h:i A') }}</p>
-        <p>-</p>
-        <p class="text-base-content/70">{{ \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') }}</p>
+      <p class="font-medium">Checkout:</p>
+      @if($showBoardingDatesInHeader && $headerCheckoutDate)
+        <p class="text-base-content/70">{{ \Carbon\Carbon::parse($headerCheckoutDate)->format('M j, Y') }}{{ $headerCheckoutTime ? ', ' . \Carbon\Carbon::parse($headerCheckoutTime)->format('g:i A') : '' }}</p>
       @else
         <p class="text-base-content/70">N/A</p>
       @endif
@@ -2593,7 +2602,7 @@
               <div class="mt-4 grid grid-cols-1 gap-6 xl:grid-cols-3">
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Date*</legend>
-                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? ($appointment->date ?? '') }}"/>
+                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? ($appointment->end_date ?? ($appointment->date ?? '')) }}"/>
                 </fieldset>
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Start Time</legend>

@@ -56,6 +56,14 @@
           <input type="hidden" name="status" value="{{ $status }}">
           <input type="hidden" name="per_page" value="{{ request('per_page', 20) }}">
           <label class="input input-sm">
+            <span class="text-base-content/70">Show</span>
+            <select name="occupancy_filter" class="bg-transparent border-0 outline-none shadow-none focus:border-0 focus:outline-none focus:ring-0 focus:shadow-none">
+              <option value="" {{ empty($occupancyFilter) ? 'selected' : '' }}>All</option>
+              <option value="occupied" {{ ($occupancyFilter ?? '') === 'occupied' ? 'selected' : '' }}>Occupied</option>
+              <option value="available" {{ ($occupancyFilter ?? '') === 'available' ? 'selected' : '' }}>Available</option>
+            </select>
+          </label>
+          <label class="input input-sm">
             <span class="text-base-content/70">Start</span>
             <input type="date" name="start_date" value="{{ old('start_date', optional($startDate)->toDateString()) }}" />
           </label>
