@@ -251,6 +251,8 @@ class KennelController extends Controller
             $kennels->setCollection($sortedKennels);
         }
 
+        $dailyAvailabilitySummary = $this->buildDailyAvailabilitySummary($kennels->getCollection(), $dateColumns, $availabilityMatrix);
+
         return view('kennels.index', compact(
             'kennels',
             'search',
@@ -259,8 +261,40 @@ class KennelController extends Controller
             'dateColumns',
             'availabilityMatrix',
             'startDate',
-            'occupancyFilter'
+            'occupancyFilter',
+            'dailyAvailabilitySummary'
         ));
+    }
+
+    private function buildDailyAvailabilitySummary(Collection $kennels, Collection $dateColumns, array $availabilityMatrix): array
+    {
+        $summary = [];
+
+        foreach ($dateColumns as $columnDate) {
+            $dateString = $columnDate->toDateString();
+            $summary[$dateString] = [
+                'available' => 0,
+                'occupied' => 0,
+            ];
+
+            foreach ($kennels as $kennel) {
+                $cell = $availabilityMatrix[$kennel->id][$dateString] ?? ['state' => 'empty'];
+                $state = $cell['state'] ?? 'empty';
+
+                if ($state === 'out_of_service') {
+                    continue;
+                }
+
+                if ($state === 'empty') {
+                    $summary[$dateString]['available']++;
+                    continue;
+                }
+
+                $summary[$dateString]['occupied']++;
+            }
+        }
+
+        return $summary;
     }
 
     private function isKennelOccupied($kennelId, Collection $boardingAppointmentsByKennel): bool

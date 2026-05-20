@@ -82,6 +82,26 @@
             </tr>
           </thead>
           <tbody>
+            <tr class="bg-base-200/30">
+              <td class="font-medium">Available</td>
+              @foreach($dateColumns as $columnDate)
+                @php
+                  $dateKey = $columnDate->toDateString();
+                  $availableCount = $dailyAvailabilitySummary[$dateKey]['available'] ?? 0;
+                @endphp
+                <td class="font-medium text-success">{{ $availableCount }}</td>
+              @endforeach
+            </tr>
+            <tr class="bg-base-200/20 border-b border-base-200">
+              <td class="font-medium">Occupied</td>
+              @foreach($dateColumns as $columnDate)
+                @php
+                  $dateKey = $columnDate->toDateString();
+                  $occupiedCount = $dailyAvailabilitySummary[$dateKey]['occupied'] ?? 0;
+                @endphp
+                <td class="font-medium text-info">{{ $occupiedCount }}</td>
+              @endforeach
+            </tr>
             @forelse ($kennels as $kennel)
               <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap h-16">
                 <td>{{ $kennel->name }}</td>
