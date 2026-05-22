@@ -265,6 +265,11 @@ class DashboardController extends Controller
             $appointment->display_pet_names = $petNames->isNotEmpty()
                 ? $petNames->join(', ')
                 : ($appointment->pet->name ?? 'N/A');
+
+            $assignmentLocation = $this->getAppointmentAssignmentLocation($appointment);
+            $appointment->assignment_label = $assignmentLocation['label'];
+            $appointment->assignment_room_name = $assignmentLocation['room_name'];
+            $appointment->assignment_kennel_name = $assignmentLocation['kennel_name'];
         }
 
         $treatmentListItems = $this->getDashboardTreatmentListItems($today);
@@ -337,7 +342,20 @@ class DashboardController extends Controller
                 ->values();
             $infoMessage = 'Showing only the next upcoming appointment per pet in Scheduled. Additional future sessions exist and will appear at the completion of the current session.';
         } else {
-            $appointments = $appointments->orderBy('date', 'desc')->orderBy('start_time', 'desc')->get();
+            $appointments = $appointments
+                ->with(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel'])
+                ->orderBy('date', 'desc')
+                ->orderBy('start_time', 'desc')
+                ->get();
+        }
+
+        $appointments->load(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel']);
+
+        foreach ($appointments as $appointment) {
+            $assignmentLocation = $this->getAppointmentAssignmentLocation($appointment);
+            $appointment->assignment_label = $assignmentLocation['label'];
+            $appointment->assignment_room_name = $assignmentLocation['room_name'];
+            $appointment->assignment_kennel_name = $assignmentLocation['kennel_name'];
         }
 
         $staffs = User::whereHas('roles', function ($query) {
@@ -349,7 +367,7 @@ class DashboardController extends Controller
 
     public function appointmentDetail($id)
     {
-        $appointment = Appointment::with(['customer.profile', 'customer.appointmentCancellations.service', 'customer.appointmentCancellations.cancelledBy', 'pet.breed', 'pet.color', 'pet.coatType', 'pet.vaccinations', 'pet.certificates', 'service.category', 'staff.profile'])
+        $appointment = Appointment::with(['customer.profile', 'customer.appointmentCancellations.service', 'customer.appointmentCancellations.cancelledBy', 'pet.breed', 'pet.color', 'pet.coatType', 'pet.vaccinations', 'pet.certificates', 'service.category', 'staff.profile', 'catRoom', 'kennel'])
             ->find($id);
         $dbEstimatedPrice = $appointment->estimated_price ?? 0;
 
@@ -548,8 +566,10 @@ class DashboardController extends Controller
         }
 
         $petBehaviors = PetBehavior::with('icon')->orderBy('description')->get();
+        $assignmentLocation = $this->getAppointmentAssignmentLocation($appointment);
+        $assignmentLabel = $assignmentLocation['label'];
 
-        return view('dashboard.appointment', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'invoiceDiscountRules', 'petBehaviors', 'dbEstimatedPrice'));
+        return view('dashboard.appointment', compact('appointment', 'staffs', 'checkedIn', 'process', 'checkout', 'invoice', 'additionalServices', 'lastAppointmentRatings', 'invoiceDiscountRules', 'petBehaviors', 'dbEstimatedPrice', 'assignmentLabel'));
     }
 
     public function listDashboard(Request $request, $id)
@@ -1951,12 +1971,10 @@ class DashboardController extends Controller
             $stayDuration = 'Not set';
         }
 
-        // Get kennel information
-        $kennel = null;
-        if ($appointment->kennel_id) {
-            $kennel = Kennel::find($appointment->kennel_id);
-        }
-        $kennelName = optional($kennel)->name ?? 'Not assigned';
+        $assignmentLocation = $this->getAppointmentAssignmentLocation($appointment);
+        $roomName = $assignmentLocation['room_name'];
+        $kennelName = $assignmentLocation['kennel_name'];
+        $assignmentLabel = $assignmentLocation['label'];
 
         // Format check-in and pickup times
         $checkinDateTime = 'Not set';
@@ -2167,6 +2185,8 @@ class DashboardController extends Controller
             'ownerName' => $ownerName,
             'stayDuration' => $stayDuration,
             'kennelName' => $kennelName,
+            'roomName' => $roomName,
+            'assignmentLabel' => $assignmentLabel,
             'checkinDateTime' => $checkinDateTime,
             'pickupDateTime' => $pickupDateTime,
         ]);
@@ -2175,5 +2195,51 @@ class DashboardController extends Controller
         $fileName = 'Boarding_Report_' . $petNames . '_' . date('Y-m-d', strtotime($appointment->date)) . '.pdf';
 
         return $pdf->download($fileName);
+    }
+
+    private function getAppointmentAssignmentLocation(Appointment $appointment): array
+    {
+        $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
+        $roomName = trim((string) ($metadata['assignment_room_name'] ?? optional($appointment->catRoom)->name ?? ''));
+        $roomType = strtolower(trim((string) ($metadata['assignment_room_type'] ?? '')));
+        $kennelName = trim((string) (optional($appointment->kennel)->name ?? ''));
+
+        if ($roomName !== '') {
+            if ($roomType === 'space') {
+                return [
+                    'label' => $roomName,
+                    'room_name' => $roomName,
+                    'kennel_name' => '',
+                ];
+            }
+
+            if ($kennelName !== '') {
+                return [
+                    'label' => $roomName . ' / ' . $kennelName,
+                    'room_name' => $roomName,
+                    'kennel_name' => $kennelName,
+                ];
+            }
+
+            return [
+                'label' => $roomName,
+                'room_name' => $roomName,
+                'kennel_name' => '',
+            ];
+        }
+
+        if ($kennelName !== '') {
+            return [
+                'label' => $kennelName,
+                'room_name' => '',
+                'kennel_name' => $kennelName,
+            ];
+        }
+
+        return [
+            'label' => 'Not assigned',
+            'room_name' => '',
+            'kennel_name' => '',
+        ];
     }
 }

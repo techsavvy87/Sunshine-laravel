@@ -283,6 +283,10 @@
       <span class="badge badge-ghost badge-xs">incl. {{ number_format($appointmentStateTaxRate, 2) }}% tax</span>
       @endif
     </div>
+    <div class="flex items-center gap-2 xl:col-span-2">
+      <p class="font-medium">Assignment:</p>
+      <p class="text-base-content/70">{{ $assignmentLabel ?? 'Not assigned' }}</p>
+    </div>
     @php
       $appointmentCheckin = $checkedIn ?? null;
       $appointmentFleaTickFlows = $appointmentCheckin && !empty($appointmentCheckin->flows)

@@ -646,6 +646,67 @@ if (!function_exists('isAssignmentConflict')) {
     }
 }
 
+if (!function_exists('getAssignmentConflictLabel')) {
+    function getAssignmentConflictLabel($appointment, string $fallback = 'Conflict'): string
+    {
+        if (!$appointment || !is_object($appointment) || !isset($appointment->metadata) || !is_array($appointment->metadata)) {
+            return $fallback;
+        }
+
+        $metadata = $appointment->metadata;
+        $warningCodes = $metadata['warning_codes'] ?? [];
+
+        if (is_string($warningCodes) && trim($warningCodes) !== '') {
+            $warningCodes = array_filter(array_map('trim', explode(',', $warningCodes)));
+        }
+
+        $warningCodes = collect(is_array($warningCodes) ? $warningCodes : [])
+            ->map(fn ($code) => strtolower((string) $code))
+            ->unique()
+            ->values();
+
+        $hasCapacity = $warningCodes->contains('capacity_exceeded');
+        $hasSizeRule = $warningCodes->contains('size_sharing');
+
+        if ($hasCapacity && $hasSizeRule) {
+            return 'Over capacity + size-rule warning';
+        }
+
+        if ($hasSizeRule) {
+            return 'Size-rule warning';
+        }
+
+        if ($hasCapacity) {
+            return 'Over capacity';
+        }
+
+        $message = strtolower((string) ($metadata['assignment_conflict_message'] ?? ''));
+        $messageHasSizeRule = str_contains($message, 'size rule warning') || str_contains($message, 'size-rule');
+        $messageHasCapacity = str_contains($message, 'capacity warning') || str_contains($message, 'over capacity');
+
+        if ($messageHasCapacity && $messageHasSizeRule) {
+            return 'Over capacity + size-rule warning';
+        }
+
+        if ($messageHasSizeRule) {
+            return 'Size-rule warning';
+        }
+
+        if ($messageHasCapacity) {
+            return 'Over capacity';
+        }
+
+        $conflictType = strtolower((string) ($metadata['assignment_conflict_type'] ?? ''));
+
+        return match ($conflictType) {
+            'kennel' => 'Assignment warning',
+            'room' => 'Room conflict',
+            'pet_type', 'cat_kennel', 'cat_to_kennel' => 'Size/type warning',
+            default => $fallback,
+        };
+    }
+}
+
 if (!function_exists('appointment_status_label')) {
     function appointment_status_label(?string $status, $service = null): string
     {

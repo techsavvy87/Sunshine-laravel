@@ -371,7 +371,7 @@ class AppointmentController extends Controller
 
         $conflict = $roomType === 'space'
             ? $this->buildSpaceRoomConflictPayload($room, $startDateTime, $endDateTime, $excludeAppointmentId)
-            : $this->buildKennelConflictPayload($room, $kennelId, $startDateTime, $endDateTime, $excludeAppointmentId);
+            : $this->buildKennelConflictPayload($room, $kennelId, $startDateTime, $endDateTime, $excludeAppointmentId, $petIds);
 
         return response()->json(array_merge([
             'conflict' => false,
@@ -505,7 +505,7 @@ class AppointmentController extends Controller
         return Kennel::whereIn('id', $kennelIds)->orderBy('name')->get();
     }
 
-    private function buildAssignmentConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
+    private function buildAssignmentConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null, array $selectedPetIds = []): array
     {
         $roomType = $this->getRoomAssignmentType($room);
 
@@ -513,10 +513,10 @@ class AppointmentController extends Controller
             return $this->buildSpaceRoomConflictPayload($room, $newStart, $newEnd, $excludeAppointmentId);
         }
 
-        return $this->buildKennelConflictPayload($room, $kennelId, $newStart, $newEnd, $excludeAppointmentId);
+        return $this->buildKennelConflictPayload($room, $kennelId, $newStart, $newEnd, $excludeAppointmentId, $selectedPetIds);
     }
 
-    private function buildKennelConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
+    private function buildKennelConflictPayload(Room $room, ?int $kennelId, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null, array $selectedPetIds = []): array
     {
         if (!$kennelId) {
             return ['conflict' => false];
@@ -534,29 +534,116 @@ class AppointmentController extends Controller
             ->orderBy('start_time')
             ->get();
 
-        $occupiedCount = $overlappingAppointments->count();
-        $capacity = (int) ($kennel->capacity ?? 0);
+        $existingPets = $this->collectAssignmentPetsFromAppointments($overlappingAppointments);
+        $incomingPets = $this->collectPetsByIds($selectedPetIds);
 
-        if ($capacity > 0 && $occupiedCount >= $capacity) {
+        $occupiedCount = $existingPets->count();
+        $incomingCount = $incomingPets->count();
+        $projectedCount = $occupiedCount + $incomingCount;
+        $capacity = (int) ($kennel->capacity ?? 0);
+        $capacityExceeded = $capacity > 0
+            && ($projectedCount > $capacity || ($incomingCount === 0 && $occupiedCount >= $capacity));
+
+        $combinedPets = $existingPets->concat($incomingPets);
+        $combinedHasNonSmall = $combinedPets->contains(function ($pet) {
+            return !$this->isSmallPetSize($pet['size'] ?? 'medium');
+        });
+        $sizeRuleWarning = $incomingCount > 0 && $combinedHasNonSmall && $projectedCount > 1;
+
+        if ($capacityExceeded || $sizeRuleWarning) {
+            $warningLines = [];
+
+            if ($capacityExceeded) {
+                $warningLines[] = 'Capacity warning: this kennel has capacity <strong>' . $capacity . '</strong>, but this assignment would place <strong>' . $projectedCount . '</strong> pet(s) in it.';
+            }
+
+            if ($sizeRuleWarning) {
+                $warningLines[] = 'Size rule warning: medium, large, and xlarge dogs should occupy a kennel alone and should not share with other pets.';
+            }
+
+            $warningLines[] = 'You can choose another kennel or continue anyway.';
+
             return [
                 'conflict' => true,
                 'conflict_type' => 'kennel',
-                'message' => 'Kennel already has an active assignment.',
+                'message' => implode('<br><br>', $warningLines),
                 'current_occupants' => $this->formatAssignmentOccupants($overlappingAppointments),
                 'occupied_count' => $occupiedCount,
+                'incoming_count' => $incomingCount,
+                'projected_count' => $projectedCount,
                 'capacity' => $capacity,
                 'room_name' => $room->name,
                 'kennel_name' => $kennel->name,
+                'selected_pet_sizes' => $incomingPets->pluck('size')->values()->all(),
+                'occupant_pet_sizes' => $existingPets->pluck('size')->values()->all(),
+                'warning_codes' => array_values(array_filter([
+                    $capacityExceeded ? 'capacity_exceeded' : null,
+                    $sizeRuleWarning ? 'size_sharing' : null,
+                ])),
             ];
         }
 
         return [
             'conflict' => false,
             'occupied_count' => $occupiedCount,
+            'incoming_count' => $incomingCount,
+            'projected_count' => $projectedCount,
             'capacity' => $capacity,
             'room_name' => $room->name,
             'kennel_name' => $kennel->name,
         ];
+    }
+
+    private function collectAssignmentPetsFromAppointments($appointments)
+    {
+        $petIds = collect($appointments)
+            ->flatMap(function ($appointment) {
+                return collect($appointment->family_pet_ids ?: [$appointment->pet_id])
+                    ->map(fn ($id) => (int) $id)
+                    ->filter(fn ($id) => $id > 0);
+            })
+            ->unique()
+            ->values();
+
+        return $this->collectPetsByIds($petIds->all());
+    }
+
+    private function collectPetsByIds(array $petIds)
+    {
+        $normalizedPetIds = collect($petIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($normalizedPetIds->isEmpty()) {
+            return collect();
+        }
+
+        return PetProfile::whereIn('id', $normalizedPetIds->all())
+            ->get(['id', 'name', 'size'])
+            ->map(function ($pet) {
+                return [
+                    'id' => (int) $pet->id,
+                    'name' => (string) ($pet->name ?? ''),
+                    'size' => $this->normalizePetSize($pet->size),
+                ];
+            })
+            ->values();
+    }
+
+    private function normalizePetSize($size): string
+    {
+        $normalized = strtolower(trim((string) $size));
+
+        return in_array($normalized, ['small', 'medium', 'large', 'xlarge'], true)
+            ? $normalized
+            : 'medium';
+    }
+
+    private function isSmallPetSize($size): bool
+    {
+        return $this->normalizePetSize($size) === 'small';
     }
 
     private function buildSpaceRoomConflictPayload(Room $room, Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null): array
@@ -1466,7 +1553,9 @@ class AppointmentController extends Controller
                     $selectedRoom,
                     $assignedKennelId,
                     Carbon::parse($request->boarding_start_datetime),
-                    Carbon::parse($request->boarding_end_datetime)
+                    Carbon::parse($request->boarding_end_datetime),
+                    null,
+                    $petIds
                 );
 
                 if (!empty($payloadConflict['conflict']) && empty($assignmentConflict)) {
@@ -1629,6 +1718,11 @@ class AppointmentController extends Controller
                 $metadata['assignment_conflict_type'] = $assignmentConflict['conflict_type'] ?? null;
                 $metadata['assignment_conflict_message'] = $assignmentConflict['message'] ?? null;
                 $metadata['assignment_conflict_occupants'] = $assignmentConflict['current_occupants'] ?? [];
+                $metadata['warning_codes'] = array_values(array_filter(
+                    is_array($assignmentConflict['warning_codes'] ?? null)
+                        ? $assignmentConflict['warning_codes']
+                        : []
+                ));
                 if ($request->boolean('allow_assignment_conflict')) {
                     $metadata['was_allowed_with_conflict'] = true;
                 }
@@ -1638,6 +1732,7 @@ class AppointmentController extends Controller
                     $metadata['assignment_conflict_type'],
                     $metadata['assignment_conflict_message'],
                     $metadata['assignment_conflict_occupants'],
+                    $metadata['warning_codes'],
                     $metadata['was_allowed_with_conflict']
                 );
             }
@@ -2048,7 +2143,8 @@ class AppointmentController extends Controller
                     $selectedKennelId,
                     Carbon::parse($request->boarding_start_datetime),
                     Carbon::parse($request->boarding_end_datetime),
-                    (int) $appointment->id
+                    (int) $appointment->id,
+                    $petIds
                 );
 
                 if (!empty($payloadConflict['conflict']) && empty($assignmentConflict)) {
@@ -2223,6 +2319,11 @@ class AppointmentController extends Controller
                 $metadata['assignment_conflict_type'] = $assignmentConflict['conflict_type'] ?? null;
                 $metadata['assignment_conflict_message'] = $assignmentConflict['message'] ?? null;
                 $metadata['assignment_conflict_occupants'] = $assignmentConflict['current_occupants'] ?? [];
+                $metadata['warning_codes'] = array_values(array_filter(
+                    is_array($assignmentConflict['warning_codes'] ?? null)
+                        ? $assignmentConflict['warning_codes']
+                        : []
+                ));
                 if ($request->boolean('allow_assignment_conflict')) {
                     $metadata['was_allowed_with_conflict'] = true;
                 }
@@ -2232,6 +2333,7 @@ class AppointmentController extends Controller
                     $metadata['assignment_conflict_type'],
                     $metadata['assignment_conflict_message'],
                     $metadata['assignment_conflict_occupants'],
+                    $metadata['warning_codes'],
                     $metadata['was_allowed_with_conflict']
                 );
             }

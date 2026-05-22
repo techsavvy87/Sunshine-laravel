@@ -212,7 +212,7 @@
                           @if ($hasConflict)
                             <span class="badge badge-warning badge-sm">
                               <span class="iconify lucide--alert-circle size-3"></span>
-                              Over capacity
+                              {{ getAssignmentConflictLabel($booking->appointment, 'Conflict') }}
                             </span>
                           @endif
                         </p>

@@ -138,6 +138,10 @@
                             {{ \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') }}
                           </p>
                           @endif
+                          <p class="text-xs text-base-content/60">
+                            <span class="text-base-content/80">Assignment: </span>
+                            {{ $appointment->assignment_label ?? 'Not assigned' }}
+                          </p>
                           @if($statusKey === 'issue')
                             <div class="absolute top-2 right-2">
                               <span class="iconify lucide--triangle-alert size-4 text-red-600"></span>

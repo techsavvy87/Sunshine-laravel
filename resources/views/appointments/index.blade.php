@@ -134,7 +134,7 @@
                   @if ($hasConflict)
                     <span class="assignment-conflict-badge">
                       <span class="iconify lucide--alert-circle size-3"></span>
-                      Over capacity
+                      {{ getAssignmentConflictLabel($appointment, 'Conflict') }}
                     </span>
                   @endif
                 </div>
