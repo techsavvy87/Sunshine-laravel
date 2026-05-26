@@ -148,9 +148,55 @@
   @php
     $showBoardingDatesInHeader = isBoardingService($appointment->service);
     $headerCheckinDate = $checkedIn->date ?? $appointment->date ?? null;
-    $headerCheckoutDate = $checkout->date ?? $appointment->end_date ?? $appointment->date ?? null;
+    $isCheckoutSaved = !empty($checkout->date);
+    $headerCheckoutDate = $isCheckoutSaved
+        ? $checkout->date
+        : ($appointment->status === 'completed' ? now()->toDateString() : ($appointment->end_date ?? $appointment->date ?? null));
     $headerCheckinTime = $appointment->start_time ?? null;
-    $headerCheckoutTime = $appointment->end_time ?? null;
+    $headerCheckoutTime = ($appointment->status === 'completed' && !$isCheckoutSaved)
+        ? now()->format('H:i:s')
+        : ($appointment->end_time ?? null);
+
+    $headerScheduledPickupAt = null;
+    if (!empty($appointment->end_date) && !empty($appointment->end_time)) {
+      $headerScheduledPickupAt = \Carbon\Carbon::parse($appointment->end_date . ' ' . $appointment->end_time);
+    }
+
+    $headerActualCheckoutAt = null;
+    if ($headerCheckoutDate) {
+      $headerActualCheckoutAt = \Carbon\Carbon::parse(
+        $headerCheckoutDate . ' ' . ($headerCheckoutTime ?: '00:00:00')
+      );
+    } elseif ($appointment->status === 'completed') {
+      $headerActualCheckoutAt = now();
+    }
+    $headerPickupIsLate = null;
+    $headerLateDurationText = null;
+
+    if ($appointment->status === 'completed' && $headerScheduledPickupAt && $headerActualCheckoutAt) {
+      $headerLateSeconds = $headerScheduledPickupAt->diffInSeconds($headerActualCheckoutAt, false);
+      $headerPickupIsLate = $headerLateSeconds > 0;
+
+      if ($headerPickupIsLate) {
+        $headerLateMinutesTotal = intdiv($headerLateSeconds, 60);
+        $headerLateDays = intdiv($headerLateMinutesTotal, 1440);
+        $headerLateHours = intdiv($headerLateMinutesTotal % 1440, 60);
+        $headerLateMinutes = $headerLateMinutesTotal % 60;
+
+        $headerLateParts = [];
+        if ($headerLateDays > 0) {
+          $headerLateParts[] = $headerLateDays . ' day' . ($headerLateDays > 1 ? 's' : '');
+        }
+        if ($headerLateHours > 0) {
+          $headerLateParts[] = $headerLateHours . ' hour' . ($headerLateHours > 1 ? 's' : '');
+        }
+        if ($headerLateMinutes > 0 || empty($headerLateParts)) {
+          $headerLateParts[] = $headerLateMinutes . ' minute' . ($headerLateMinutes > 1 ? 's' : '');
+        }
+
+        $headerLateDurationText = implode(' ', $headerLateParts);
+      }
+    }
   @endphp
   <div class="grid grid-cols-1 gap-2 xl:grid-cols-5 border border-base-300 rounded-box px-5 py-2 text-sm">
     <div class="flex items-center gap-2">
@@ -180,12 +226,47 @@
     <div class="flex items-center gap-2">
       <p class="font-medium">Checkout:</p>
       @if($showBoardingDatesInHeader && $headerCheckoutDate)
-        <p class="text-base-content/70">{{ \Carbon\Carbon::parse($headerCheckoutDate)->format('M j, Y') }}{{ $headerCheckoutTime ? ', ' . \Carbon\Carbon::parse($headerCheckoutTime)->format('g:i A') : '' }}</p>
+        <div class="flex items-center gap-2">
+          <p class="text-base-content/70 whitespace-nowrap shrink-0">{!! \Carbon\Carbon::parse($headerCheckoutDate)->format('M j, Y') . ($headerCheckoutTime ? ', ' . \Carbon\Carbon::parse($headerCheckoutTime)->format('g:i') . '&nbsp;' . \Carbon\Carbon::parse($headerCheckoutTime)->format('A') : '') !!}</p>
+          @if($appointment->status === 'completed')
+            @if(is_null($headerPickupIsLate))
+              <div class="badge badge-soft badge-secondary badge-sm whitespace-nowrap shrink-0 min-w-max">Unavailable</div>
+            @elseif($headerPickupIsLate)
+              <div class="badge badge-soft badge-warning badge-sm whitespace-nowrap shrink-0 min-w-max">Late</div>
+            @else
+              <div class="badge badge-soft badge-success badge-sm whitespace-nowrap shrink-0 min-w-max">In Time</div>
+            @endif
+            <div class="dropdown dropdown-end dropdown-hover dropdown-bottom flex">
+              <div tabindex="0" role="button" class="cursor-help flex relative z-[2]">
+                <span class="iconify lucide--info size-4 text-base-content/60"></span>
+              </div>
+              <div tabindex="0" class="dropdown-content z-[1] mt-2 menu p-3 shadow bg-base-100 rounded-box w-72 border border-base-300" style="left: -12px;">
+                <div class="space-y-1 text-xs text-base-content/80">
+                  @if($headerScheduledPickupAt)
+                    <p>Scheduled pickup: {{ $headerScheduledPickupAt->format('M j, Y g:i A') }}</p>
+                    <p>Actual checkout: {{ $headerActualCheckoutAt->format('M j, Y g:i A') }}</p>
+                    @if($headerPickupIsLate && $headerLateDurationText)
+                      <p class="text-warning">Late by {{ $headerLateDurationText }}</p>
+                    @endif
+                  @else
+                    <p>Scheduled pickup date/time is not available for this appointment.</p>
+                  @endif
+                </div>
+              </div>
+            </div>
+            @endif
+        </div>
       @else
         <p class="text-base-content/70">N/A</p>
       @endif
     </div>
+    @if($appointment->status === 'completed' && $headerPickupIsLate && $headerLateDurationText)
     <div class="flex items-center gap-2">
+      <p class="font-medium">Late:</p>
+      <p class="text-base-content/70 whitespace-nowrap">{{ $headerLateDurationText }}</p>
+    </div>
+    @endif
+    <div class="flex items-center gap-2" @if($appointment->status === 'completed' && !is_null($headerPickupIsLate) && !$headerPickupIsLate) style="padding-left: 15%;" @endif>
       <p class="font-medium">Status: </p>
       @if($appointment->status === 'checked_in')
         <div class="badge badge-soft badge-info badge-sm">Scheduled</div>
@@ -2597,6 +2678,40 @@
       </div>
       @endif
       @if ($appointment->status === 'completed')
+      @php
+        $actualCheckoutAt = now();
+        $scheduledPickupAt = null;
+        if (!empty($appointment->end_date) && !empty($appointment->end_time)) {
+          $scheduledPickupAt = \Carbon\Carbon::parse($appointment->end_date . ' ' . $appointment->end_time);
+        }
+
+        $pickupIsLate = null;
+        $lateDurationText = null;
+        if ($scheduledPickupAt) {
+          $lateSeconds = $scheduledPickupAt->diffInSeconds($actualCheckoutAt, false);
+          $pickupIsLate = $lateSeconds > 0;
+
+          if ($pickupIsLate) {
+            $lateMinutesTotal = intdiv($lateSeconds, 60);
+            $lateDays = intdiv($lateMinutesTotal, 1440);
+            $lateHours = intdiv($lateMinutesTotal % 1440, 60);
+            $lateMinutes = $lateMinutesTotal % 60;
+
+            $lateParts = [];
+            if ($lateDays > 0) {
+              $lateParts[] = $lateDays . ' day' . ($lateDays > 1 ? 's' : '');
+            }
+            if ($lateHours > 0) {
+              $lateParts[] = $lateHours . ' hour' . ($lateHours > 1 ? 's' : '');
+            }
+            if ($lateMinutes > 0 || empty($lateParts)) {
+              $lateParts[] = $lateMinutes . ' minute' . ($lateMinutes > 1 ? 's' : '');
+            }
+
+            $lateDurationText = implode(' ', $lateParts);
+          }
+        }
+      @endphp
       <div class="card card-border bg-base-100 mt-3">
         <div class="card-body gap-0">
           <div class="bg-base-200 rounded-box collapse collapse-arrow">
@@ -2606,7 +2721,7 @@
               <div class="mt-4 grid grid-cols-1 gap-6 xl:grid-cols-3">
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Date*</legend>
-                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? ($appointment->end_date ?? ($appointment->date ?? '')) }}"/>
+                  <input class="input input-bordered w-full" placeholder="Select date" id="checkout_date" name="checkout_date" type="date" value="{{ $checkout->date ?? now()->toDateString() }}"/>
                 </fieldset>
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Start Time</legend>
@@ -2614,7 +2729,7 @@
                 </fieldset>
                 <fieldset class="fieldset">
                   <legend class="fieldset-legend">Pickup Time</legend>
-                  <input class="input input-bordered w-full" placeholder="Select time" id="checkout_pickup_time" name="checkout_pickup_time" type="time" min="09:00" max="18:00" value="{{ $appointment->end_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('H:i') : '' }}" disabled/>
+                  <input class="input input-bordered w-full" placeholder="Select time" id="checkout_pickup_time" name="checkout_pickup_time" type="time" min="09:00" max="18:00" value="{{ !empty($checkout->date) ? ($appointment->end_time ? \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('H:i') : '') : now()->format('H:i') }}" disabled/>
                 </fieldset>
               </div>
               @if (isGroomingService($appointment->service) && $process && $process->notes)
@@ -2710,12 +2825,6 @@
                 </fieldset>
               </div>
               @endif
-              <div class="mt-4">
-                <fieldset class="fieldset">
-                  <legend class="fieldset-legend">Notes</legend>
-                  <textarea class="textarea textarea-bordered w-full" placeholder="Add any notes about the checkout process..." id="checkout_notes" name="checkout_notes" rows="3">{{ $checkout->notes ?? '' }}</textarea>
-                </fieldset>
-              </div>
               @if (isPrivateTrainingService($appointment->service))
               @php
                 $descriptionNeeds = $checkedIn && $checkedIn->flows && isset($checkedIn->flows['description_needs']) ? $checkedIn->flows['description_needs'] : '';
@@ -2809,49 +2918,7 @@
                     @endforeach
                   </div>
                 </div>
-                @else
-                <div>
-                  <p class="font-medium mb-2">Rating:</p>
-                  <div class="mb-2 ms-4">
-                    <div class="space-y-2">
-                      <label class="flex items-center gap-2">
-                        <input type="radio" class="radio radio-xs" name="rating"
-                          value="green" {{ $checkout && $checkout->flows && isset($checkout->flows['rating']) && $checkout->flows['rating'] === 'green' ? 'checked' : '' }} />
-                        <span class="text-sm">Green (no issues)</span>
-                      </label>
-                      <label class="flex items-center gap-2">
-                        <input type="radio" class="radio radio-xs" name="rating"
-                          value="yellow" {{ $checkout && $checkout->flows && isset($checkout->flows['rating']) && $checkout->flows['rating'] === 'yellow' ? 'checked' : '' }} />
-                        <span class="text-sm">Yellow (mild reaction to {{ strtolower($appointment->service->name) }}, specifically</span>
-                        <input placeholder="Touch to write" id="rating_yellow_detail" name="rating_yellow_detail" class="input input-ghost input-xs" aria-label="Input" type="text" style="max-width: 220px;" value="{{ $checkout && $checkout->flows && isset($checkout->flows['rating_yellow_detail']) ? $checkout->flows['rating_yellow_detail'] : '' }}"/>
-                        <span class="text-sm">)</span>
-                      </label>
-                      <label class="flex items-center gap-2">
-                        <input type="radio" class="radio radio-xs" name="rating"
-                          value="purple" {{ $checkout && $checkout->flows && isset($checkout->flows['rating']) && $checkout->flows['rating'] === 'purple' ? 'checked' : '' }} />
-                        <span class="text-sm">Purple (reacts to {{ strtolower($appointment->service->name) }}, go slow with</span>
-                        <input placeholder="Touch to write" id="rating_purple_detail" name="rating_purple_detail" class="input input-ghost input-xs" aria-label="Input" type="text" style="max-width: 220px;" value="{{ $checkout && $checkout->flows && isset($checkout->flows['rating_purple_detail']) ? $checkout->flows['rating_purple_detail'] : '' }}"/>
-                        <span class="text-sm">)</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
                 @endif
-                <div>
-                  <p class="font-medium mb-2">Pictures:</p>
-                  <div class="mb-2 ms-4">
-                    <input aria-label="File" id="checkout_pictures" name="checkout_pictures[]" class="file-input w-full" type="file" multiple accept="image/*" />
-                  </div>
-                  @if($checkout && $checkout->flows && isset($checkout->flows['pictures']) && is_array($checkout->flows['pictures']))
-                  <div class="mt-2 ms-4 flex flex-wrap gap-2">
-                    @foreach($checkout->flows['pictures'] as $picture)
-                    <div class="relative">
-                      <img src="{{ asset('storage/checkouts/' . $picture) }}" alt="Checkout Picture" class="w-24 h-24 object-cover rounded-lg border">
-                    </div>
-                    @endforeach
-                  </div>
-                  @endif
-                </div>
                 <div class="mt-3">
                   <p class="font-medium mb-2">Notes for {{ $appointment->service->name }}:</p>
                   <div class="mb-2 ms-4">
@@ -6149,5 +6216,27 @@
     const exportUrl = '{{ route("export-boarding-detail-report-pdf", $appointment->id) }}' + '?meds_am=' + medsAm + '&meds_pm=' + medsPm;
     window.open(exportUrl, '_blank');
   }
+
+  @if ($appointment->status === 'completed')
+  (function() {
+    var checkoutSaved = @json(!empty($checkout->date));
+    if (!checkoutSaved) {
+      var now = new Date();
+      var dateField = document.getElementById('checkout_date');
+      var pickupTimeField = document.getElementById('checkout_pickup_time');
+      if (dateField) {
+        var y = now.getFullYear();
+        var mo = String(now.getMonth() + 1).padStart(2, '0');
+        var d = String(now.getDate()).padStart(2, '0');
+        dateField.value = y + '-' + mo + '-' + d;
+      }
+      if (pickupTimeField) {
+        var h = String(now.getHours()).padStart(2, '0');
+        var mi = String(now.getMinutes()).padStart(2, '0');
+        pickupTimeField.value = h + ':' + mi;
+      }
+    }
+  })();
+  @endif
 </script>
 @endsection
