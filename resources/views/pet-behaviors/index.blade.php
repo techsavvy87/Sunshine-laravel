@@ -110,7 +110,7 @@
             <div class="inline-flex items-center gap-3">
               <label class="input input-sm">
                 <span class="iconify lucide--search text-base-content/80 size-3.5"></span>
-                <input class="w-24 sm:w-36" placeholder="Search behaviors" aria-label="Search behaviors" type="search" onkeydown="handleSearch(event)"/>
+                <input class="w-24 sm:w-36" id="search" placeholder="Search behaviors" aria-label="Search behaviors" type="search" onkeydown="handleSearch(event)" value="{{ $search }}"/>
               </label>
             </div>
           </div>
@@ -127,7 +127,7 @@
               <tbody id="behavior_icon_list">
                 @foreach ($behaviors as $behavior)
                 <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap">
-                  <td>{{ $loop->iteration }}</td>
+                  <td>{{ ($behaviors->currentPage() - 1) * $behaviors->perPage() + $loop->iteration }}</td>
                   <td>{!! $behavior->icon?->icon !!}</td>
                   <td>{{ $behavior->description }}</td>
                   <td>
@@ -146,9 +146,15 @@
                   </td>
                 </tr>
                 @endforeach
+                @if ($behaviors->isEmpty())
+                <tr>
+                  <td colspan="4" class="text-center text-base-content/60">No pet behaviors found.</td>
+                </tr>
+                @endif
               </tbody>
             </table>
           </div>
+          {{ $behaviors->links('layouts.pagination', ['items' => $behaviors]) }}
         </div>
       </div>
     </div>
@@ -219,6 +225,22 @@
     const preview = document.getElementById('icon_selected_preview');
     preview.innerHTML = html;
   }
+
+  function showSuccessAndReload(message) {
+    $('#success_message').text(message);
+
+    const modalEl = document.getElementById('success_modal');
+    if (!modalEl) {
+      window.location.reload();
+      return;
+    }
+
+    modalEl.addEventListener('close', function() {
+      window.location.reload();
+    }, { once: true });
+
+    success_modal.showModal();
+  }
 // End of icon picker logic
 
   function saveBehavior() {
@@ -263,8 +285,7 @@
         'X-CSRF-TOKEN': '{{ csrf_token() }}'
       },
       success: function(response) {
-        $('#success_message').text(response.message);
-        success_modal.showModal();
+        showSuccessAndReload(response.message);
 
         $('#save_btn .loading').css('display', 'none');
         $('#save_btn').prop('disabled', false);
@@ -280,9 +301,6 @@
 
         // Reset the form fields
         resetForm();
-
-        // update the behavior list
-        updateBehaviors(response.result);
       },
       error: function(xhr) {
         let msg = 'An error occurred. Please try again.';
@@ -315,31 +333,6 @@
     setSelectedIconPreview('<span class="text-base-content/60">Select Icon</span>');
 
     $('#behavior_icon_form_title').text('Add Behavior');
-  }
-
-  function updateBehaviors(result) {
-    const behaviorList = $('#behavior_icon_list');
-    behaviorList.empty();
-
-    $.each(result, function(index, behavior) {
-      const row = `
-        <tr class="hover:bg-base-200/40 cursor-pointer *:text-nowrap">
-          <td>${index + 1}</td>
-          <td style="text-align: left">${behavior.icon ? behavior.icon.icon : ''}</td>
-          <td>${behavior.description ?? ''}</td>
-          <td>
-            <div class="inline-flex w-fit">
-              <button class="btn btn-square btn-primary btn-outline btn-xs border-transparent" onclick='editBehavior(${JSON.stringify(behavior)})'>
-                <span class="iconify lucide--pencil" style="font-size: 0.875rem;"></span>
-              </button>
-              <button class="btn btn-square btn-error btn-outline btn-xs border-transparent" onclick='openDeleteModal(${behavior.id})'>
-                <span class="iconify lucide--trash" style="font-size: 0.875rem;"></span>
-              </button>
-            </div>
-          </td>
-        </tr>`;
-      behaviorList.append(row);
-    });
   }
 
   function cancelBehavior() {
@@ -377,10 +370,7 @@
         'X-CSRF-TOKEN': '{{ csrf_token() }}'
       },
       success: function(response) {
-        $('#success_message').text(response.message);
-        success_modal.showModal();
-        // update the behavior list
-        updateBehaviors(response.result);
+        showSuccessAndReload(response.message);
       },
       error: function(xhr) {
         let msg = 'An error occurred. Please try again.';
@@ -395,12 +385,17 @@
 
   function handleSearch(event) {
     if (event.key === 'Enter') {
-      const query = event.target.value.toLowerCase();
-      $('#behavior_icon_list tr').each(function() {
-        const row = $(this);
-        const text = row.text().toLowerCase();
-        row.toggle(text.includes(query));
-      });
+      const url = new URL(window.location.href);
+      const searchValue = event.target.value.trim();
+
+      if (searchValue) {
+        url.searchParams.set('search', searchValue);
+      } else {
+        url.searchParams.delete('search');
+      }
+
+      url.searchParams.delete('page');
+      window.location.href = url.toString();
     }
   }
 </script>

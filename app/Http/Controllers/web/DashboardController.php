@@ -2531,6 +2531,52 @@ class DashboardController extends Controller
             }
         }
 
+        $allBehaviorIds = $familyPets
+            ->flatMap(function ($pet) {
+                return collect(is_array($pet->pet_behavior_id ?? null) ? $pet->pet_behavior_id : [])
+                    ->filter()
+                    ->map(fn ($behaviorId) => (int) $behaviorId)
+                    ->values();
+            })
+            ->unique()
+            ->values();
+
+        $petBehaviorsById = $allBehaviorIds->isNotEmpty()
+            ? PetBehavior::with('icon')->whereIn('id', $allBehaviorIds->all())->get()->keyBy('id')
+            : collect();
+
+        $normalizeBehaviorIconMarkup = function ($iconMarkup) {
+            $normalized = trim((string) $iconMarkup);
+            if ($normalized === '') {
+                return null;
+            }
+
+            $normalized = html_entity_decode($normalized, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $normalized = str_replace('dominant-baseline="central"font-size=', 'dominant-baseline="central" font-size=', $normalized);
+
+            if (!str_starts_with($normalized, '<svg') && !str_starts_with($normalized, '<span') && !str_starts_with($normalized, '<i')) {
+                return null;
+            }
+
+            return $normalized;
+        };
+
+        $buildStarRating = function ($ratingValue) {
+            $rating = strtolower(trim((string) $ratingValue));
+            $filledStarsByRating = [
+                'green' => 5,
+                'yellow' => 3,
+                'red' => 1,
+            ];
+
+            if (!isset($filledStarsByRating[$rating])) {
+                return null;
+            }
+
+            $filled = $filledStarsByRating[$rating];
+            return str_repeat('★', $filled) . str_repeat('☆', max(0, 5 - $filled));
+        };
+
         foreach ($familyPets as $pet) {
             $petAge = null;
             if (!empty($pet->age)) {
@@ -2549,9 +2595,30 @@ class DashboardController extends Controller
                 ->map(fn ($behaviorId) => (int) $behaviorId)
                 ->unique()
                 ->values();
-            $behaviorLabels = $behaviorIds->isNotEmpty()
-                ? PetBehavior::whereIn('id', $behaviorIds->all())->pluck('description')->filter()->values()->all()
-                : [];
+            $behaviorItems = $behaviorIds
+                ->map(function ($behaviorId) use ($petBehaviorsById, $normalizeBehaviorIconMarkup) {
+                    $behavior = $petBehaviorsById->get($behaviorId);
+                    if (!$behavior) {
+                        return null;
+                    }
+
+                    $description = trim((string) ($behavior->description ?? ''));
+                    $iconMarkup = $normalizeBehaviorIconMarkup(optional($behavior->icon)->icon ?? '');
+
+                    if ($description === '' && empty($iconMarkup)) {
+                        return null;
+                    }
+
+                    return [
+                        'label' => $description,
+                        'icon_markup' => $iconMarkup,
+                    ];
+                })
+                ->filter()
+                ->values()
+                ->all();
+            $behaviorLabels = collect($behaviorItems)->pluck('label')->filter()->values()->all();
+            $ratingStars = $buildStarRating($pet->rating ?? null);
 
             // Merge shared flows with per-pet overrides.
             $petIdKey = (string) $pet->id;
@@ -2679,7 +2746,9 @@ class DashboardController extends Controller
             $petsCareData[] = [
                 'pet' => $pet,
                 'isSenior' => $isSenior,
+                'ratingStars' => $ratingStars,
                 'behaviorLabels' => $behaviorLabels,
+                'behaviorItems' => $behaviorItems,
                 'medicationRequired' => $medicationRequired,
                 'dryFoodList' => $dryFoodList,
                 'wetFoodList' => $wetFoodList,

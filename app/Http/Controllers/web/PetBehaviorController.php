@@ -9,13 +9,22 @@ use App\Models\BehaviorIcon;
 
 class PetBehaviorController extends Controller
 {
-    public function listBehaviors()
+    public function listBehaviors(Request $request)
     {
+        $perPage = $request->get('per_page', 20);
+        $search = $request->get('search');
+
         $icons = BehaviorIcon::all();
 
-        $behaviors = PetBehavior::with('icon')->get();
+        $behaviors = PetBehavior::with('icon')
+            ->when($search, function ($query) use ($search) {
+                $query->where('description', 'like', "%{$search}%");
+            })
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage)
+            ->withQueryString();
 
-        return view('pet-behaviors.index', compact('behaviors', 'icons'));
+        return view('pet-behaviors.index', compact('behaviors', 'icons', 'search'));
     }
 
     public function create(Request $request)

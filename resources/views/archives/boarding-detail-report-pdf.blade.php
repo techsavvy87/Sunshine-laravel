@@ -131,6 +131,37 @@
     .pet-note {
       margin-bottom: 1px;
     }
+    .rating-stars {
+      letter-spacing: 0.5px;
+    }
+    .behavior-list {
+      margin-top: 1px;
+    }
+    .behavior-item {
+      margin-bottom: 1px;
+      display: block;
+    }
+    .behavior-icon {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 4px;
+      vertical-align: middle;
+      color: #1a1a1a;
+    }
+    .behavior-icon svg,
+    .behavior-icon .iconify,
+    .behavior-icon img {
+      width: 12px;
+      height: 12px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    .behavior-label {
+      line-height: 1.2;
+      display: inline-block;
+      vertical-align: middle;
+    }
     .care-notes-row {
       margin-top: 3px;
       padding-top: 2px;
@@ -225,11 +256,36 @@
               @endif
             </div>
 
-            @if(!empty($petData['behaviorLabels']))
-              <div class="pet-meta">
-                <strong>Behavior:</strong> {{ implode(', ', $petData['behaviorLabels']) }}
-              </div>
-            @endif
+            <div class="pet-meta">
+              <strong>Rating:</strong>
+              @if(!empty($petData['ratingStars']))
+                <span class="rating-stars">{{ $petData['ratingStars'] }}</span>
+              @else
+                <span class="empty-message">N/A</span>
+              @endif
+            </div>
+
+            <div class="pet-meta">
+              <strong>Behavior:</strong>
+              @if(!empty($petData['behaviorItems']))
+                <div class="behavior-list">
+                  @foreach($petData['behaviorItems'] as $behavior)
+                    @php
+                      $iconMarkup = trim((string) ($behavior['icon_markup'] ?? ''));
+                      $iconDataUri = $iconMarkup !== '' ? 'data:image/svg+xml;base64,' . base64_encode($iconMarkup) : '';
+                    @endphp
+                    <div class="behavior-item">
+                      @if($iconDataUri !== '')
+                        <span class="behavior-icon"><img src="{{ $iconDataUri }}" alt="" /></span>
+                      @endif
+                      <span class="behavior-label">{{ $behavior['label'] ?: 'N/A' }}</span>
+                    </div>
+                  @endforeach
+                </div>
+              @else
+                <span class="empty-message">N/A</span>
+              @endif
+            </div>
 
             {{-- Feeding --}}
             @if(!empty($petData['dryFoodList']) || !empty($petData['wetFoodList']) || !empty($petData['ownerFoodList']) || !empty($petData['ownerFood']))
