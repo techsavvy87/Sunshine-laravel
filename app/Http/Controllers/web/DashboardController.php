@@ -2781,6 +2781,8 @@ class DashboardController extends Controller
         $fileName = 'Boarding_Report_' . $petNames . '_' . date('Y-m-d', strtotime($appointment->date)) . '.pdf';
 
         return $pdf->download($fileName);
+        // $showPetStayInfo = true;
+        // return view('archives.boarding-detail-report-pdf', compact('appointment', 'familyPets', 'petsCareData', 'showPetStayInfo', 'ownerName', 'stayDuration', 'kennelName', 'roomName', 'assignmentLabel', 'checkinDateTime', 'pickupDateTime'));
     }
 
     private function getAppointmentAssignmentLocation(Appointment $appointment): array

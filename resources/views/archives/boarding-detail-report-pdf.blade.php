@@ -18,7 +18,7 @@
       padding: 8px;
     }
     h1 {
-      font-size: 20px;
+      font-size: 16px;
       margin: 0 0 8px 0;
       color: #1a1a1a;
       border-bottom: 2px solid #4a5568;
@@ -133,18 +133,19 @@
     }
     .rating-stars {
       letter-spacing: 0.5px;
+      font-size: 16px;
     }
     .behavior-list {
       margin-top: 1px;
     }
     .behavior-item {
-      margin-bottom: 1px;
+      margin-bottom: 5px;
       display: block;
     }
     .behavior-icon {
       display: inline-block;
-      width: 12px;
-      height: 12px;
+      width: 24px;
+      height: 24px;
       margin-right: 4px;
       vertical-align: middle;
       color: #1a1a1a;
@@ -152,8 +153,8 @@
     .behavior-icon svg,
     .behavior-icon .iconify,
     .behavior-icon img {
-      width: 12px;
-      height: 12px;
+      width: 24px;
+      height: 24px;
       display: inline-block;
       vertical-align: middle;
     }
@@ -272,8 +273,55 @@
                   @foreach($petData['behaviorItems'] as $behavior)
                     @php
                       $iconMarkup = trim((string) ($behavior['icon_markup'] ?? ''));
-                      $iconDataUri = $iconMarkup !== '' ? 'data:image/svg+xml;base64,' . base64_encode($iconMarkup) : '';
-                    @endphp
+
+                      if ($iconMarkup !== '') {
+                          // Remove unsupported/problematic SVG parts
+                          $iconMarkup = preg_replace('/<style\b[^>]*>.*?<\/style>/is', '', $iconMarkup);
+                          $iconMarkup = preg_replace('/\sclass="[^"]*"/i', '', $iconMarkup);
+                          $iconMarkup = preg_replace('/\sid="[^"]*"/i', '', $iconMarkup);
+                          $iconMarkup = preg_replace('/\sversion="[^"]*"/i', '', $iconMarkup);
+                          $iconMarkup = preg_replace('/\sxml:space="[^"]*"/i', '', $iconMarkup);
+                          $iconMarkup = preg_replace('/\sxmlns:xlink="[^"]*"/i', '', $iconMarkup);
+
+                          // Force SVG size for PDF
+                          $iconMarkup = preg_replace('/\swidth="[^"]*"/i', ' width="32"', $iconMarkup, 1);
+                          $iconMarkup = preg_replace('/\sheight="[^"]*"/i', ' height="32"', $iconMarkup, 1);
+
+                          // If SVG has huge viewBox, scale paths down into 32x32 viewBox
+                          if (preg_match('/viewBox="0 0 ([0-9.]+) ([0-9.]+)"/i', $iconMarkup, $matches)) {
+                              $viewBoxWidth = (float) $matches[1];
+
+                              if ($viewBoxWidth > 32) {
+                                  $scale = 32 / $viewBoxWidth;
+
+                                  $iconMarkup = preg_replace(
+                                      '/viewBox="[^"]*"/i',
+                                      'viewBox="0 0 32 32"',
+                                      $iconMarkup,
+                                      1
+                                  );
+
+                                  $iconMarkup = preg_replace(
+                                      '/<svg\b([^>]*)>/i',
+                                      '<svg$1><g transform="scale(' . $scale . ')">',
+                                      $iconMarkup,
+                                      1
+                                  );
+
+                                  $iconMarkup = preg_replace(
+                                      '/<\/svg>/i',
+                                      '</g></svg>',
+                                      $iconMarkup,
+                                      1
+                                  );
+                              }
+                          }
+
+                          $iconDataUri = 'data:image/svg+xml;base64,' . base64_encode($iconMarkup);
+                      } else {
+                          $iconDataUri = '';
+                      }
+                  @endphp
                     <div class="behavior-item">
                       @if($iconDataUri !== '')
                         <span class="behavior-icon"><img src="{{ $iconDataUri }}" alt="" /></span>
