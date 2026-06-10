@@ -20,8 +20,8 @@
 
   .pet-behavior-icon svg,
   .pet-behavior-icon .iconify {
-    width: 1rem;
-    height: 1rem;
+    width: 24px;
+    height: 24px;
     display: block;
   }
 
