@@ -178,6 +178,12 @@
               <option value="no_show" {{ $appointment->status === 'no_show' ? 'selected' : '' }}>No Show</option>
             </select>
           </div>
+          <div class="space-y-2 xl:col-span-4" id="wait_listed_group">
+            <label class="label cursor-pointer justify-start gap-3 px-0">
+              <input type="checkbox" name="is_wait_listed" id="is_wait_listed" class="checkbox checkbox-sm" value="1" {{ $appointment->status === 'wait listed' ? 'checked' : '' }} />
+              <span class="fieldset-label mb-0">Wait Listed</span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -1682,6 +1688,13 @@
     function saveAppointment() {
       const selectedStatus = $('#appointment_status').val();
       const currentStatus = '{{ $appointment->status }}';
+      const isWaitListed = $('#is_wait_listed').is(':checked');
+
+      if (isWaitListed) {
+        $('#form_status').val('wait listed');
+        proceedWithFormSubmission();
+        return;
+      }
       
       if (selectedStatus === 'cancelled') {
         const requiresModal = requiresLateCancellationModal(appointmentDate, appointmentStartTime);
@@ -1715,7 +1728,7 @@
 
         confirm_modal.showModal();
         return;
-      } else if (selectedStatus === '' && (currentStatus === 'cancelled' || currentStatus === 'no_show')) {
+      } else if (selectedStatus === '' && (currentStatus === 'cancelled' || currentStatus === 'no_show' || currentStatus === 'wait listed')) {
         $('#form_status').val('checked_in');
         proceedWithFormSubmission();
         return;
@@ -1744,6 +1757,7 @@
       const selectedRoomType = getSelectedRoomType();
       const familyKennelMode = getSelectedPetAssignmentMode();
       const familyPetAssignments = familyKennelMode === 'individual' ? getSelectedFamilyPetAssignments() : {};
+      const isWaitListed = $('#is_wait_listed').is(':checked');
 
       if (!customer || pet.length === 0 || !service) {
         $('#alert_message').text('Please fill in all required fields.');
@@ -1751,25 +1765,25 @@
         return;
       }
 
-      if (isBoarding && familyKennelMode !== 'individual' && !room) {
+      if (isBoarding && !isWaitListed && familyKennelMode !== 'individual' && !room) {
         $('#alert_message').text('Please select a room for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && familyKennelMode === 'individual' && hasMissingFamilyPetAssignments()) {
+      if (isBoarding && !isWaitListed && familyKennelMode === 'individual' && hasMissingFamilyPetAssignments()) {
         $('#alert_message').text('Please assign a room and kennel (for standard rooms) to each selected pet.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && selectedRoomType === 'standard' && familyKennelMode === 'shared' && !kennel) {
+      if (isBoarding && !isWaitListed && selectedRoomType === 'standard' && familyKennelMode === 'shared' && !kennel) {
         $('#alert_message').text('Please select a kennel for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && familyKennelMode !== 'individual' && selectedRoomType === 'standard') {
+      if (isBoarding && !isWaitListed && familyKennelMode !== 'individual' && selectedRoomType === 'standard') {
         const roomKennelIds = getSelectedRoomKennelIds();
         if (kennel && roomKennelIds.length > 0 && !roomKennelIds.includes(String(kennel))) {
           $('#alert_message').text('The selected kennel does not belong to the selected room.');
@@ -1816,7 +1830,7 @@
           return;
         }
 
-        if ($('#allow_assignment_conflict').val() !== '1') {
+        if (!isWaitListed && $('#allow_assignment_conflict').val() !== '1') {
           $.ajax({
             url: '{{ route("validate-assignment") }}',
             method: 'POST',

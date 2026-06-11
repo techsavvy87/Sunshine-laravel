@@ -21,7 +21,6 @@ return new class extends Migration
             $table->string('phone_number_2')->nullable();
             $table->string('home_number')->nullable();
             $table->string('work_number')->nullable();
-            $table->enum('gender', ['male', 'female'])->default('male');
             $table->string('address')->nullable();
             $table->string('city')->nullable();
             $table->string('state')->nullable();

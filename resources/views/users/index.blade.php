@@ -61,7 +61,6 @@
                   @endif
                   <div>
                     <p class="font-medium">{{ $user->profile ? $user->profile->first_name . ' ' . $user->profile->last_name : ''   }}</p>
-                    <p class="text-base-content/60 text-xs capitalize">{{ $user->profile ? $user->profile->gender : '' }}</p>
                   </div>
                 </div>
               </td>

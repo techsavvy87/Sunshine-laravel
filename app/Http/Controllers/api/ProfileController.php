@@ -45,7 +45,6 @@ class ProfileController extends Controller
             'first_name' => 'required|string',
             'last_name' => 'required|string',
             'phone_number_1' => 'required|string',
-            'gender' => 'required|in:male,female',
             'avatar_action' => 'required|in:keep,change,delete',
             'profile_avatar' => 'image|mimes:jpeg,png,jpg,gif,svg,webp|max:2048',
         ]);
@@ -62,7 +61,6 @@ class ProfileController extends Controller
         $profile->last_name = $request->last_name;
         $profile->phone_number_1 = $request->phone_number_1;
         $profile->phone_number_2 = $request->phone_number_2;
-        $profile->gender = $request->gender;
         $profile->address = $request->address;
         $profile->city = $request->city;
         $profile->state = $request->state;

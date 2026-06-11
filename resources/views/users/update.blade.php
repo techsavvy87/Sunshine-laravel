@@ -146,12 +146,6 @@
               <label class="fieldset-label">Work Number</label>
               <input class="input w-full" placeholder="(098) 765 4321" type="tel" name="work_number" id="work_number" value="{{ $user->profile ? $user->profile->work_number : '' }}" oninput="formatPhoneNumber(this)"/>
             </div>
-            <div class="flex items-center gap-3">
-              <input class="radio radio-sm" id="gender-male" type="radio" value="male" name="gender" {{ $user->profile && $user->profile->gender === 'male' ? 'checked' : '' }}/>
-              <label class="fieldset-label" for="gender-male">Male</label>
-              <input class="radio radio-sm" id="gender-female" type="radio" value="female" name="gender" {{ $user->profile && $user->profile->gender === 'female' ? 'checked' : '' }}/>
-              <label class="fieldset-label" for="gender-female">Female</label>
-            </div>
           </div>
         </div>
       </div>

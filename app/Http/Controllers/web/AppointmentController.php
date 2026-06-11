@@ -1906,6 +1906,7 @@ class AppointmentController extends Controller
             'pet' => 'required|array|min:1',
             'pet.*' => 'exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
+            'is_wait_listed' => 'nullable|boolean',
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
             'room' => 'nullable|exists:rooms,id',
@@ -1953,6 +1954,7 @@ class AppointmentController extends Controller
         }
 
         $service = Service::with('category')->find($request->service);
+    $isWaitListed = $request->boolean('is_wait_listed');
         $selectedPets = PetProfile::whereIn('id', $petIds)->get();
         $selectedRoom = $request->filled('room') ? Room::find($request->room) : null;
         $roomType = $this->getRoomAssignmentType($selectedRoom);
@@ -1970,7 +1972,7 @@ class AppointmentController extends Controller
         );
         $assignmentConflict = null;
 
-        if (isBoardingService($service)) {
+        if (isBoardingService($service) && !$isWaitListed) {
             if ($familyKennelMode !== 'individual' && !$selectedRoom) {
                 return back()->withErrors([
                     'room' => 'Please select a room for the boarding appointment.'
@@ -2229,7 +2231,7 @@ class AppointmentController extends Controller
             $metadata['secondary_service_ids'] = implode(',', $request->secondary_services);
         }
 
-        if ($selectedRoom) {
+        if ($selectedRoom && !$isWaitListed) {
             $metadata['room_id'] = $selectedRoom->id;
             $metadata['room_name'] = $selectedRoom->name;
         }
@@ -2258,7 +2260,7 @@ class AppointmentController extends Controller
             );
         }
 
-        if ($selectedRoom) {
+        if ($selectedRoom && !$isWaitListed) {
             $metadata['assignment_room_id'] = $selectedRoom->id;
             $metadata['assignment_room_name'] = $selectedRoom->name;
             $metadata['assignment_room_type'] = $roomType;
@@ -2355,10 +2357,10 @@ class AppointmentController extends Controller
         $appointment->customer_id = $request->customer;
         $appointment->pet_id = $primaryPetId;
         $appointment->service_id = $request->service;
-        $appointment->kennel_id = isBoardingService($service) && $roomType === 'standard'
+        $appointment->kennel_id = !$isWaitListed && isBoardingService($service) && $roomType === 'standard'
             ? $this->getAssignmentKennelIdForMode($familyKennelMode, $assignedKennelId, $familyKennelAssignments)
             : null;
-        $appointment->cat_room_id = $selectedRoom?->id;
+        $appointment->cat_room_id = !$isWaitListed ? $selectedRoom?->id : null;
 
         if ($request->filled('staff')) {
             $appointment->staff_id = $request->staff;
@@ -2429,7 +2431,7 @@ class AppointmentController extends Controller
             }
         }
 
-        $appointment->status = 'checked_in';
+        $appointment->status = $isWaitListed ? 'wait listed' : 'checked_in';
         $appointment->additional_service_ids = !empty($selectedAdditionalServiceIds)
             ? implode(',', $selectedAdditionalServiceIds)
             : null;
@@ -2438,9 +2440,13 @@ class AppointmentController extends Controller
 
         $bookingNotifier->sendConfirmation($appointment, Auth::id());
 
-        appointment_audit_log($appointment->id, 'Appointment is created.');
+        if ($appointment->status === 'checked_in') {
+            appointment_audit_log($appointment->id, 'Appointment is created.');
+        } else {
+            appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label($appointment->status, $appointment->service) . ".");
+        }
 
-        if ($selectedRoom && isBoardingService($service) && $roomType === 'space') {
+        if (!$isWaitListed && $selectedRoom && isBoardingService($service) && $roomType === 'space') {
             $this->markCatRoomOutOfService($selectedRoom->id);
         }
 
@@ -2622,6 +2628,7 @@ class AppointmentController extends Controller
             'pet' => 'required|array|min:1',
             'pet.*' => 'exists:pet_profiles,id',
             'service' => 'required|exists:services,id',
+            'is_wait_listed' => 'nullable|boolean',
             'staff' => 'nullable|exists:users,id',
             'kennel' => 'nullable|exists:kennels,id',
             'room' => 'nullable|exists:rooms,id',
@@ -2657,6 +2664,7 @@ class AppointmentController extends Controller
 
         $metadata = is_array($appointment->metadata) ? $appointment->metadata : [];
         $service = Service::with('category')->find($request->service);
+        $isWaitListed = $request->boolean('is_wait_listed');
         $selectedRoom = $request->filled('room') ? Room::find($request->room) : null;
         $roomType = $this->getRoomAssignmentType($selectedRoom);
         $selectedKennelId = $request->filled('kennel') ? (int) $request->kennel : null;
@@ -2673,7 +2681,7 @@ class AppointmentController extends Controller
         );
         $assignmentConflict = null;
 
-        if (isBoardingService($service)) {
+        if (isBoardingService($service) && !$isWaitListed) {
             if ($familyKennelMode !== 'individual' && !$selectedRoom) {
                 return back()->withErrors([
                     'room' => 'Please select a room for the boarding appointment.'
@@ -2942,7 +2950,7 @@ class AppointmentController extends Controller
             ])->withInput();
         }
 
-        if ($selectedRoom) {
+        if ($selectedRoom && !$isWaitListed) {
             $metadata['room_id'] = $selectedRoom->id;
             $metadata['room_name'] = $selectedRoom->name;
         } else {
@@ -2973,7 +2981,7 @@ class AppointmentController extends Controller
             );
         }
 
-        if ($selectedRoom) {
+        if ($selectedRoom && !$isWaitListed) {
             $metadata['assignment_room_id'] = $selectedRoom->id;
             $metadata['assignment_room_name'] = $selectedRoom->name;
             $metadata['assignment_room_type'] = $roomType;
@@ -3022,15 +3030,32 @@ class AppointmentController extends Controller
                     $metadata['was_allowed_with_conflict']
                 );
             }
+        } else {
+            unset(
+                $metadata['assignment_room_id'],
+                $metadata['assignment_room_name'],
+                $metadata['assignment_room_type'],
+                $metadata['assignment_kennel_id'],
+                $metadata['assignment_kennel_name'],
+                $metadata['family_kennel_mode'],
+                $metadata['family_kennel_assignments'],
+                $metadata['family_pet_assignments'],
+                $metadata['assignment_conflict'],
+                $metadata['assignment_conflict_type'],
+                $metadata['assignment_conflict_message'],
+                $metadata['assignment_conflict_occupants'],
+                $metadata['warning_codes'],
+                $metadata['was_allowed_with_conflict']
+            );
         }
 
         $oldStatus = $appointment->status;
         $oldKennelId = $appointment->kennel_id;
         $oldRoomId = $appointment->cat_room_id;
-        $newKennelId = isBoardingService($service) && $roomType === 'standard'
+        $newKennelId = !$isWaitListed && isBoardingService($service) && $roomType === 'standard'
             ? $this->getAssignmentKennelIdForMode($familyKennelMode, $selectedKennelId, $familyKennelAssignments)
             : null;
-        $newRoomId = isBoardingService($service) && $selectedRoom ? (int) $selectedRoom->id : null;
+        $newRoomId = !$isWaitListed && isBoardingService($service) && $selectedRoom ? (int) $selectedRoom->id : null;
 
         $appointment->customer_id = $request->customer;
         $appointment->pet_id = $primaryPetId;
@@ -3120,6 +3145,12 @@ class AppointmentController extends Controller
                     $this->releaseTimeSlots($appointment);
                 }
             }
+        }
+
+        if ($isWaitListed) {
+            $appointment->status = 'wait listed';
+        } elseif ($oldStatus === 'wait listed' && !in_array($appointment->status, ['cancelled', 'no_show'], true)) {
+            $appointment->status = 'checked_in';
         }
 
         $isActiveBoardingAppointment = isBoardingService($service)

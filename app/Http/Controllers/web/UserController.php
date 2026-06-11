@@ -26,8 +26,7 @@ class UserController extends Controller
                         $q->where('first_name', 'like', "%{$search}%")
                             ->orWhere('last_name', 'like', "%{$search}%")
                             ->orWhere('phone_number_1', 'like', "%{$search}%")
-                            ->orWhere('phone_number_2', 'like', "%{$search}%")
-                            ->orWhere('gender', 'like', "%{$search}%");
+                            ->orWhere('phone_number_2', 'like', "%{$search}%");
                     });
             })->whereDoesntHave('roles', function ($query) {
                 $query->where('title', 'customer');
@@ -125,7 +124,6 @@ class UserController extends Controller
         $profile->last_name = $request->last_name;
         $profile->phone_number_1 = $request->phone_number_1;
         $profile->phone_number_2 = $request->phone_number_2;
-        $profile->gender = $request->gender;
         $profile->address = $request->street_address;
         $profile->city = $request->city;
         $profile->state = $request->state;
@@ -221,7 +219,6 @@ class UserController extends Controller
         $profile->last_name = $request->last_name;
         $profile->phone_number_1 = $request->phone_number_1;
         $profile->phone_number_2 = $request->phone_number_2;
-        $profile->gender = $request->gender;
         $profile->address = $request->street_address;
         $profile->city = $request->city;
         $profile->state = $request->state;

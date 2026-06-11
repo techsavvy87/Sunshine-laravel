@@ -874,6 +874,7 @@ if (!function_exists('appointment_status_label')) {
     {
         $labels = [
             'checked_in' => 'Scheduled',
+            'wait listed' => 'Wait Listed',
             'in_progress' => ($service && (isBoardingService($service) || isDaycareService($service))) ? 'On Property' : 'In Progress',
             'completed' => 'Completed',
             'finished' => 'Finished',

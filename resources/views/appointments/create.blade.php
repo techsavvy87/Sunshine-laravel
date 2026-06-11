@@ -139,6 +139,12 @@
               <option value="" hidden selected>Choose a staff</option>
             </select>
           </div>
+          <div class="space-y-2 xl:col-span-4" id="wait_listed_group">
+            <label class="label cursor-pointer justify-start gap-3 px-0">
+              <input type="checkbox" name="is_wait_listed" id="is_wait_listed" class="checkbox checkbox-sm" value="1" />
+              <span class="fieldset-label mb-0">Wait Listed</span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -1460,6 +1466,7 @@
       const timeSlot = $('#time_slot').val();
 
       const isBoarding = $('#boarding_start_group').is(':visible');
+      const isWaitListed = $('#is_wait_listed').is(':checked');
       const boardingStart = $('#boarding_start_datetime').val();
       const boardingEnd = $('#boarding_end_datetime').val();
       const scheduledAdditionalServiceId = getSelectedAdditionalServiceForTimeSlot();
@@ -1475,25 +1482,25 @@
         return;
       }
 
-      if (isBoarding && familyKennelMode !== 'individual' && !room) {
+      if (isBoarding && !isWaitListed && familyKennelMode !== 'individual' && !room) {
         $('#alert_message').text('Please select a room for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && familyKennelMode === 'individual' && hasMissingFamilyPetAssignments()) {
+      if (isBoarding && !isWaitListed && familyKennelMode === 'individual' && hasMissingFamilyPetAssignments()) {
         $('#alert_message').text('Please assign a room and kennel (for standard rooms) to each selected pet.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && selectedRoomType === 'standard' && familyKennelMode === 'shared' && !kennel) {
+      if (isBoarding && !isWaitListed && selectedRoomType === 'standard' && familyKennelMode === 'shared' && !kennel) {
         $('#alert_message').text('Please select a kennel for the boarding appointment.');
         alert_modal.showModal();
         return;
       }
 
-      if (isBoarding && familyKennelMode !== 'individual' && selectedRoomType === 'standard') {
+      if (isBoarding && !isWaitListed && familyKennelMode !== 'individual' && selectedRoomType === 'standard') {
         const roomKennelIds = getSelectedRoomKennelIds();
         if (kennel && roomKennelIds.length > 0 && !roomKennelIds.includes(String(kennel))) {
           $('#alert_message').text('The selected kennel does not belong to the selected room.');
@@ -1608,6 +1615,11 @@
       };
 
       if (!isBoarding) {
+        submitAppointment();
+        return;
+      }
+
+      if (isWaitListed) {
         submitAppointment();
         return;
       }

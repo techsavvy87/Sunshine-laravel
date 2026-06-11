@@ -60,7 +60,6 @@
                   @endif
                   <div>
                     <p class="font-medium">{{ $customer->profile ? $customer->profile->first_name . ' ' . $customer->profile->last_name : ''   }}</p>
-                    <p class="text-base-content/60 text-xs capitalize">{{ $customer->profile ? $customer->profile->gender : '' }}</p>
                   </div>
                 </div>
               </td>

@@ -193,13 +193,20 @@
                 {{ $totalMeals }} meals
               </td>
               <td style="text-align:center">
-                @if($appointment->status === 'checked_in')
-                  Scheduled
-                @elseif($appointment->status === 'in_progress')
-                  {{ (isBoardingService($appointment->service) || isDaycareService($appointment->service)) ? 'On Property' : 'In Progress' }}
-                @else
-                  {{ ucfirst(str_replace('_', ' ', $appointment->status)) }}
-                @endif
+                @php
+                  $statusLabel = appointment_status_label($appointment->status, $appointment->service);
+                  $statusBadgeClass = match ($appointment->status) {
+                    'checked_in' => 'badge-soft badge-info',
+                    'wait listed' => 'badge-soft badge-secondary',
+                    'in_progress' => 'badge-soft badge-warning',
+                    'completed' => 'badge-soft badge-primary',
+                    'finished' => 'badge-soft badge-success',
+                    'cancelled', 'no_show' => 'badge-soft badge-error',
+                    'issue' => 'badge-soft badge-error',
+                    default => 'badge-soft badge-ghost',
+                  };
+                @endphp
+                <span class="badge badge-sm {{ $statusBadgeClass }}">{{ $statusLabel }}</span>
               </td>
               <td>
                 <div class="inline-flex w-fit">

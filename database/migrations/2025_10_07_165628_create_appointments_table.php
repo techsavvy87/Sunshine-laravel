@@ -23,7 +23,7 @@ return new class extends Migration
             $table->date('date')->nullable();
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
-            $table->enum('status', ['cancelled', 'no_show', 'checked_in', 'in_progress', 'completed', 'finished', 'issue'])->default('checked_in');
+            $table->enum('status', ['cancelled', 'no_show', 'checked_in', 'in_progress', 'completed', 'finished', 'issue', 'wait listed'])->default('checked_in');
             $table->decimal('estimated_price', 10, 2)->nullable();
             $table->json('metadata')->nullable();
             $table->date('end_date')->nullable();

@@ -3,6 +3,105 @@
 
 @section('page-css')
 <style>
+  .kanban-shell {
+    --kanban-offset: 152px;
+    height: calc(100vh - var(--kanban-offset));
+  }
+
+  .kanban-shell .card-body {
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .kanban-toolbar {
+    flex-shrink: 0;
+  }
+
+  .kanban-board-wrap {
+    margin-top: 0.875rem;
+    flex: 1;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .kanban-board {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .kanban-col {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .kanban-col .card-body {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .kanban-col-head {
+    padding: 0.55rem 0.75rem;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .kanban-col-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.5rem;
+  }
+
+  .kanban-card {
+    border: 1px solid hsl(var(--bc) / 0.1);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+
+  .kanban-card:hover {
+    box-shadow: 0 6px 18px hsl(var(--bc) / 0.12);
+    transform: translateY(-1px);
+  }
+
+  .kanban-pet-name {
+    font-size: 1rem;
+    line-height: 1.25rem;
+  }
+
+  .kanban-muted {
+    color: hsl(var(--bc) / 0.66);
+  }
+
+  @media (max-width: 1279px) {
+    .kanban-shell {
+      height: auto;
+    }
+
+    .kanban-board-wrap {
+      overflow-x: auto;
+      overflow-y: visible;
+    }
+
+    .kanban-board {
+      height: auto;
+    }
+
+    .kanban-col {
+      height: 440px;
+    }
+  }
 </style>
 @endsection
 
@@ -32,9 +131,9 @@
       <button class="btn btn-ghost" style="height: 1px; padding: 0px"><span class="iconify lucide--x size-4"></span></button>
   </div>
   @endif
-  <div class="card bg-base-100 shadow mt-3">
+  <div class="card bg-base-100 shadow mt-3 kanban-shell">
     <div class="card-body p-4">
-      <form id="search_form" class="w-full mt-3" method="GET" action="{{ route('service-dashboard', $id) }}">
+      <form id="search_form" class="w-full kanban-toolbar" method="GET" action="{{ route('service-dashboard', $id) }}">
         <div class="grow grid grid-cols-1 gap-2 xl:grid-cols-5">
           <input type="text" class="input input-sm w-full" placeholder="Customer/Pet" name="customer" value="{{ $customerPet }}"/>
           <select class="select select-sm w-full" name="staff" value="{{ $staffId }}">
@@ -62,8 +161,8 @@
           </div>
         </div>
       </form>
-      <div class="mt-8 overflow-auto">
-        <div class="grid grid-cols-1 xl:grid-cols-4 gap-5">
+      <div class="kanban-board-wrap">
+        <div class="grid grid-cols-1 xl:grid-cols-4 gap-4 kanban-board">
           @php
             $isBoardingOrDaycare = $service->category && (str_contains(strtolower($service->category->name), 'boarding') || str_contains(strtolower($service->category->name), 'daycare'));
             $statuses = [
@@ -81,20 +180,18 @@
             ];
           @endphp
           @foreach($statuses as $statusKey => $statusLabel)
-            <div class="card shadow" style="background-color: {{ $statusColors[$statusKey] ?? '#f3f4f6' }};">
-              <div class="card-body p-2">
-                <div class="flex items-center justify-between">
-                  <span></span>
-                  <h4 class="font-semibold text-center mb-2" style="color: black">{{ $statusLabel }}</h4>
+            <div class="card shadow kanban-col" style="background-color: {{ $statusColors[$statusKey] ?? '#f3f4f6' }};">
+              <div class="card-body">
+                <div class="kanban-col-head flex items-center justify-between" style="background-color: {{ $statusColors[$statusKey] ?? '#f3f4f6' }};">
+                  <h4 class="font-semibold text-sm xl:text-base" style="color: black">{{ $statusLabel }}</h4>
+                  <span class="badge badge-sm badge-outline">{{ $appointments->where('status', $statusKey)->count() }}</span>
                   @if ($statusKey == 'checked_in')
-                  <a class="btn btn-square btn-ghost btn-xs mb-2" href="{{ route('add-appointment', ['service_id' => $id]) }}" title="Add Appointment">
+                  <a class="btn btn-square btn-ghost btn-xs" href="{{ route('add-appointment', ['service_id' => $id]) }}" title="Add Appointment">
                     <span class="iconify lucide--plus size-3 font-medium"></span>
                   </a>
-                  @else
-                  <span></span>
                   @endif
                 </div>
-                <div class="space-y-2">
+                <div class="space-y-2 kanban-col-list">
                   @forelse($appointments->where('status', $statusKey) as $appointment)
                     @php
                       $cardPets = $appointment->family_pets;
@@ -102,17 +199,17 @@
                         $cardPets = collect([$appointment->pet]);
                       }
                     @endphp
-                    <div class="card bg-base-100 shadow-sm p-2 relative" style="cursor: pointer;" onclick="window.location='{{ route('appointment-dashboard', $appointment->id) }}'">
-                      <div class="flex gap-3 items-center">
+                    <div class="card bg-base-100 shadow-sm p-2 relative kanban-card" style="cursor: pointer;" onclick="window.location='{{ route('appointment-dashboard', $appointment->id) }}'">
+                      <div class="flex gap-3 items-start">
                         <div class="flex w-14 shrink-0 flex-col gap-1">
                           @foreach($cardPets->take(3) as $pet)
                             <img src="{{ empty($pet->pet_img) ? asset('images/no_image.jpg') : asset('storage/pets/'. $pet->pet_img) }}" alt="Pet Image" class="mask mask-squircle bg-base-200 block" style="width: 3.5rem; height: 3.5rem; object-fit: cover;">
                           @endforeach
                         </div>
                         <div class="min-w-0 flex-1">
-                          <div class="space-y-0.5 flex items-center gap-1">
+                          <div class="space-y-0.5 flex items-center gap-1 flex-wrap">
                             @foreach($cardPets as $pet)
-                              <p class="font-medium leading-tight wrap-break-word">
+                              <p class="font-semibold leading-tight wrap-break-word kanban-pet-name">
                                 <span>{{ $pet->name }}</span>
                                 @if ($pet->rating === 'green')
                                   <i class="fa-solid fa-star" style="color: lightseagreen; font-size: 14px"></i>
@@ -124,21 +221,21 @@
                               </p>
                             @endforeach
                           </div>
-                          <p class="text-xs text-base-content/60">
+                          <p class="text-xs kanban-muted">
                             <span class="text-base-content/80">Customer: </span>
                             {{ $appointment->customer->profile ? $appointment->customer->profile->first_name . " " . $appointment->customer->profile->last_name : $appointment->customer->name }}
                           </p>
-                          <p class="text-xs text-base-content/60">
+                          <p class="text-xs kanban-muted">
                             <span class="text-base-content/80">Staff: </span>
                             {{ $appointment->staff_id ? ($appointment->staff->profile ? $appointment->staff->profile->first_name . " " . $appointment->staff->profile->last_name : $appointment->staff->name) : 'Unassigned' }}
                           </p>
                           @if($appointment->end_time)
-                          <p class="text-xs text-base-content/60">
+                          <p class="text-xs kanban-muted">
                             <span class="text-base-content/80">Pickup: </span>
                             {{ \Carbon\Carbon::createFromFormat('H:i:s', $appointment->end_time)->format('h:i A') }}
                           </p>
                           @endif
-                          <p class="text-xs text-base-content/60">
+                          <p class="text-xs kanban-muted">
                             <span class="text-base-content/80">Assignment: </span>
                             {{ $appointment->assignment_label ?? 'Not assigned' }}
                           </p>

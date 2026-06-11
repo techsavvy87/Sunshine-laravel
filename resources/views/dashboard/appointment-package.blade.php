@@ -121,13 +121,6 @@
                     {{ $appointment->customer->profile->first_name }} {{ $appointment->customer->profile->last_name }}
                   </p>
                   <p class="text-sm text-base-content/70">
-                    @if ($appointment->customer->profile->gender === 'male')
-                    <div class="badge badge-dash badge-primary badge-sm">{{ ucfirst($appointment->customer->profile->gender) }}</div>
-                    @else
-                    <div class="badge badge-dash badge-success badge-sm">{{ ucfirst($appointment->customer->profile->gender) }}</div>
-                    @endif
-                  </p>
-                  <p class="text-sm text-base-content/70">
                     <span class="iconify lucide--mail text-base-content/70 size-3"></span>
                     {{ $appointment->customer->email }}
                   </p>
