@@ -1954,7 +1954,7 @@ class AppointmentController extends Controller
         }
 
         $service = Service::with('category')->find($request->service);
-    $isWaitListed = $request->boolean('is_wait_listed');
+        $isWaitListed = $request->boolean('is_wait_listed');
         $selectedPets = PetProfile::whereIn('id', $petIds)->get();
         $selectedRoom = $request->filled('room') ? Room::find($request->room) : null;
         $roomType = $this->getRoomAssignmentType($selectedRoom);
@@ -2438,7 +2438,7 @@ class AppointmentController extends Controller
         $appointment->metadata = !empty($metadata) ? $metadata : null;
         $appointment->save();
 
-        $bookingNotifier->sendConfirmation($appointment, Auth::id());
+        // $bookingNotifier->sendConfirmation($appointment, Auth::id());
 
         if ($appointment->status === 'checked_in') {
             appointment_audit_log($appointment->id, 'Appointment is created.');
@@ -3177,7 +3177,7 @@ class AppointmentController extends Controller
         }
 
         if ($appointment->status === 'cancelled' && $oldStatus !== 'cancelled') {
-            $bookingNotifier->sendCancellation($appointment, Auth::id());
+            // $bookingNotifier->sendCancellation($appointment, Auth::id());
         }
 
         return redirect()->route('appointments')->with([
@@ -4238,7 +4238,7 @@ class AppointmentController extends Controller
             'total_amount' => $totalAmount
         ];
 
-        Mail::to($invoice->email)->send(new InvoiceMail($emailData));
+        // Mail::to($invoice->email)->send(new InvoiceMail($emailData));
     }
 
     private function summarizeInvoiceItemsFromInvoice(Invoice $invoice): array
@@ -4413,7 +4413,7 @@ class AppointmentController extends Controller
                 'sender_name' => $senderName,
             ];
 
-            Mail::to($customerEmail)->send(new AdminCustomerMessage($messageData));
+            // Mail::to($customerEmail)->send(new AdminCustomerMessage($messageData));
 
             return response()->json([
                 'status' => true,
@@ -4821,7 +4821,7 @@ class AppointmentController extends Controller
         appointment_audit_log($appointment->id, $label);
 
         if ($newStatus === 'cancelled' && $oldStatus !== 'cancelled') {
-            $bookingNotifier->sendCancellation($appointment, Auth::id());
+            // $bookingNotifier->sendCancellation($appointment, Auth::id());
         }
 
         if (in_array($newStatus, ['cancelled', 'no_show'])) {

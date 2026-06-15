@@ -42,23 +42,23 @@ Artisan::command('inspire', function () {
 //     }
 // })->daily();
 
-Schedule::command(SendGroupClassReminders::class)
-    ->timezone('America/New_York')
-    ->dailyAt('08:00')
-    ->withoutOverlapping();
-Schedule::command(SendBoardingBookingReminders::class)
-    ->timezone('America/New_York')
-    ->dailyAt('11:00')
-    ->withoutOverlapping();
-Schedule::command(SendBoardingPreCheckinEmails::class)
-    ->timezone('America/New_York')
-    ->everyMinute()
-    ->withoutOverlapping();
-Schedule::command(MonitorPetVaccineExpirations::class)
-    ->timezone('America/New_York')
-    ->dailyAt('01:00')
-    ->withoutOverlapping();
-Schedule::command(SendTimeSlotScheduleReminders::class)
-    ->timezone('America/New_York')
-    ->dailyAt('08:00')
-    ->withoutOverlapping();
+// Schedule::command(SendGroupClassReminders::class)
+//     ->timezone('America/New_York')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping();
+// Schedule::command(SendBoardingBookingReminders::class)
+//     ->timezone('America/New_York')
+//     ->dailyAt('11:00')
+//     ->withoutOverlapping();
+// Schedule::command(SendBoardingPreCheckinEmails::class)
+//     ->timezone('America/New_York')
+//     ->everyMinute()
+//     ->withoutOverlapping();
+// Schedule::command(MonitorPetVaccineExpirations::class)
+//     ->timezone('America/New_York')
+//     ->dailyAt('01:00')
+//     ->withoutOverlapping();
+// Schedule::command(SendTimeSlotScheduleReminders::class)
+//     ->timezone('America/New_York')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping();
