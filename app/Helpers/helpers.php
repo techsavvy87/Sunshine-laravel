@@ -378,6 +378,281 @@ if (!function_exists('getBoardingFleaTickBreakdown')) {
     }
 }
 
+if (!function_exists('getBoardingAppointmentPetIds')) {
+    function getBoardingAppointmentPetIds($appointment): array
+    {
+        if (!$appointment) {
+            return [];
+        }
+
+        $petIds = collect($appointment->family_pet_ids ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values();
+
+        if ($petIds->isEmpty() && !empty($appointment->pet_id)) {
+            $petIds = collect([(int) $appointment->pet_id]);
+        }
+
+        return $petIds->all();
+    }
+}
+
+if (!function_exists('getBoardingEffectivePetFlows')) {
+    function getBoardingEffectivePetFlows(array $flows, int $petId): array
+    {
+        $petIdKey = (string) $petId;
+
+        $petSpecific = isset($flows['pet_specific']) && is_array($flows['pet_specific'])
+            ? $flows['pet_specific']
+            : [];
+        $legacyPetsCare = isset($flows['pets_care']) && is_array($flows['pets_care'])
+            ? $flows['pets_care']
+            : [];
+
+        $petFlow = $petSpecific[$petIdKey] ?? ($petSpecific[$petId] ?? []);
+        $legacyPetFlow = $legacyPetsCare[$petIdKey] ?? ($legacyPetsCare[$petId] ?? []);
+
+        $petFlow = is_array($petFlow) ? $petFlow : [];
+        $legacyPetFlow = is_array($legacyPetFlow) ? $legacyPetFlow : [];
+
+        $effectiveFlows = array_merge($flows, $legacyPetFlow, $petFlow);
+        unset($effectiveFlows['pet_specific'], $effectiveFlows['pets_care']);
+
+        return $effectiveFlows;
+    }
+}
+
+if (!function_exists('getPreviousBoardingCheckinMapByPet')) {
+    function getPreviousBoardingCheckinMapByPet($currentAppointment): array
+    {
+        $petIds = getBoardingAppointmentPetIds($currentAppointment);
+        if (empty($petIds) || empty($currentAppointment?->id)) {
+            return [];
+        }
+
+        $query = \App\Models\Appointment::query()
+            ->with('checkin')
+            ->where('id', '!=', $currentAppointment->id)
+            ->whereHas('checkin');
+
+        if (!empty($currentAppointment->date)) {
+            $currentDate = \Carbon\Carbon::parse($currentAppointment->date)->toDateString();
+            $currentAppointmentId = (int) $currentAppointment->id;
+
+            $query->where(function ($dateQuery) use ($currentDate, $currentAppointmentId) {
+                $dateQuery->whereDate('date', '<', $currentDate)
+                    ->orWhere(function ($sameDateQuery) use ($currentDate, $currentAppointmentId) {
+                        $sameDateQuery->whereDate('date', $currentDate)
+                            ->where('id', '<', $currentAppointmentId);
+                    });
+            });
+        } else {
+            $query->where('id', '<', $currentAppointment->id);
+        }
+
+        $candidates = $query
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->limit(250)
+            ->get();
+
+        $previousByPet = [];
+
+        foreach ($candidates as $candidateAppointment) {
+            $candidatePetIds = getBoardingAppointmentPetIds($candidateAppointment);
+            if (empty($candidatePetIds)) {
+                continue;
+            }
+
+            $matchingPetIds = array_values(array_intersect($petIds, $candidatePetIds));
+            if (empty($matchingPetIds)) {
+                continue;
+            }
+
+            $candidateCheckin = $candidateAppointment->checkin;
+            if (!$candidateCheckin) {
+                continue;
+            }
+
+            $candidateFlows = [];
+            if (!empty($candidateCheckin->flows)) {
+                $decodedCandidateFlows = json_decode($candidateCheckin->flows, true);
+                $candidateFlows = is_array($decodedCandidateFlows) ? $decodedCandidateFlows : [];
+            }
+
+            foreach ($matchingPetIds as $petId) {
+                if (isset($previousByPet[$petId])) {
+                    continue;
+                }
+
+                $effectiveFlows = getBoardingEffectivePetFlows($candidateFlows, (int) $petId);
+                $careInstructions = trim((string) ($effectiveFlows['care_notes'] ?? ($effectiveFlows['pet_notes'] ?? ($candidateCheckin->notes ?? ''))));
+
+                $previousByPet[$petId] = [
+                    'appointment_id' => (int) $candidateAppointment->id,
+                    'checkin_id' => (int) $candidateCheckin->id,
+                    'flows' => $effectiveFlows,
+                    'notes' => trim((string) ($candidateCheckin->notes ?? '')),
+                    'care_instructions' => $careInstructions,
+                ];
+            }
+
+            if (count($previousByPet) >= count($petIds)) {
+                break;
+            }
+        }
+
+        return $previousByPet;
+    }
+}
+
+if (!function_exists('applyPreviousStayAutofillToBoardingCheckin')) {
+    function applyPreviousStayAutofillToBoardingCheckin($appointment, ?array $currentFlows = null, ?string $currentNotes = null): array
+    {
+        $flows = is_array($currentFlows) ? $currentFlows : [];
+        $notes = trim((string) ($currentNotes ?? ''));
+        $petIds = getBoardingAppointmentPetIds($appointment);
+
+        if (empty($petIds)) {
+            return [
+                'flows' => $flows,
+                'notes' => $notes,
+            ];
+        }
+
+        $previousByPet = getPreviousBoardingCheckinMapByPet($appointment);
+        if (empty($previousByPet)) {
+            return [
+                'flows' => $flows,
+                'notes' => $notes,
+            ];
+        }
+
+        $petSpecific = isset($flows['pet_specific']) && is_array($flows['pet_specific'])
+            ? $flows['pet_specific']
+            : [];
+
+        $hasMeaningfulRows = function ($rows, array $keys) {
+            if (!is_array($rows) || empty($rows)) {
+                return false;
+            }
+
+            foreach ($rows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+
+                foreach ($keys as $key) {
+                    $value = $row[$key] ?? null;
+                    if (is_bool($value) && $value) {
+                        return true;
+                    }
+
+                    if (!is_bool($value) && trim((string) $value) !== '') {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        };
+
+        foreach ($petIds as $petId) {
+            if (!isset($previousByPet[$petId])) {
+                continue;
+            }
+
+            $petIdKey = (string) $petId;
+            $currentPetSpecific = $petSpecific[$petIdKey] ?? ($petSpecific[$petId] ?? []);
+            $currentPetSpecific = is_array($currentPetSpecific) ? $currentPetSpecific : [];
+
+            $currentEffectiveFlows = getBoardingEffectivePetFlows($flows, (int) $petId);
+            $previousFlows = $previousByPet[$petId]['flows'] ?? [];
+
+            $currentHasMedicationData =
+                $hasMeaningfulRows($currentEffectiveFlows['meds_list'] ?? [], ['name', 'amount', 'dispense_am', 'dispense_pm', 'dispense_rest', 'dispense_before_bed', 'dispense_prn', 'dispense_custom_time', 'custom_time', 'meal_condition']) ||
+                trim((string) ($currentEffectiveFlows['meds']['name'] ?? '')) !== '' ||
+                trim((string) ($currentEffectiveFlows['meds']['amount'] ?? '')) !== '';
+
+            if (!$currentHasMedicationData) {
+                if (isset($previousFlows['meds_list']) && is_array($previousFlows['meds_list']) && !empty($previousFlows['meds_list'])) {
+                    $currentPetSpecific['meds_list'] = $previousFlows['meds_list'];
+                }
+                if (isset($previousFlows['meds']) && is_array($previousFlows['meds'])) {
+                    $currentPetSpecific['meds'] = $previousFlows['meds'];
+                }
+            }
+
+            $currentHasDryFoodData =
+                $hasMeaningfulRows($currentEffectiveFlows['dry_food_list'] ?? [], ['brand', 'amount', 'dispense_am', 'dispense_pm', 'dispense_lunch']) ||
+                trim((string) ($currentEffectiveFlows['dry_food']['brand'] ?? '')) !== '' ||
+                trim((string) ($currentEffectiveFlows['dry_food']['amount'] ?? '')) !== '';
+
+            if (!$currentHasDryFoodData) {
+                if (isset($previousFlows['dry_food_list']) && is_array($previousFlows['dry_food_list']) && !empty($previousFlows['dry_food_list'])) {
+                    $currentPetSpecific['dry_food_list'] = $previousFlows['dry_food_list'];
+                }
+                if (isset($previousFlows['dry_food']) && is_array($previousFlows['dry_food'])) {
+                    $currentPetSpecific['dry_food'] = $previousFlows['dry_food'];
+                }
+            }
+
+            $currentHasWetFoodData =
+                $hasMeaningfulRows($currentEffectiveFlows['wet_food_list'] ?? [], ['brand', 'amount', 'dispense_am', 'dispense_pm', 'dispense_lunch']) ||
+                trim((string) ($currentEffectiveFlows['wet_food']['brand'] ?? '')) !== '' ||
+                trim((string) ($currentEffectiveFlows['wet_food']['amount'] ?? '')) !== '';
+
+            if (!$currentHasWetFoodData) {
+                if (isset($previousFlows['wet_food_list']) && is_array($previousFlows['wet_food_list']) && !empty($previousFlows['wet_food_list'])) {
+                    $currentPetSpecific['wet_food_list'] = $previousFlows['wet_food_list'];
+                }
+                if (isset($previousFlows['wet_food']) && is_array($previousFlows['wet_food'])) {
+                    $currentPetSpecific['wet_food'] = $previousFlows['wet_food'];
+                }
+            }
+
+            $currentFleaTickPrevention = trim((string) ($currentEffectiveFlows['flea_tick_prevention'] ?? ''));
+            if ($currentFleaTickPrevention === '') {
+                $previousFleaTickPrevention = trim((string) ($previousFlows['flea_tick_prevention'] ?? ''));
+                if ($previousFleaTickPrevention !== '') {
+                    $currentPetSpecific['flea_tick_prevention'] = $previousFleaTickPrevention;
+                }
+
+                $previousFleaTickPreventionType = trim((string) ($previousFlows['flea_tick_prevention_type'] ?? ''));
+                if ($previousFleaTickPreventionType !== '') {
+                    $currentPetSpecific['flea_tick_prevention_type'] = $previousFleaTickPreventionType;
+                }
+            }
+
+            $currentCareNotes = trim((string) ($currentEffectiveFlows['care_notes'] ?? ($currentEffectiveFlows['pet_notes'] ?? '')));
+            $previousCareNotes = trim((string) ($previousByPet[$petId]['care_instructions'] ?? ''));
+            if ($currentCareNotes === '' && $previousCareNotes !== '') {
+                $currentPetSpecific['care_notes'] = $previousCareNotes;
+            }
+
+            $petSpecific[$petIdKey] = $currentPetSpecific;
+        }
+
+        if (!empty($petSpecific)) {
+            $flows['pet_specific'] = $petSpecific;
+        }
+
+        if ($notes === '' && count($petIds) === 1) {
+            $primaryPetId = (int) ($petIds[0] ?? 0);
+            $primaryCareNotes = trim((string) ($previousByPet[$primaryPetId]['care_instructions'] ?? ''));
+            if ($primaryCareNotes !== '') {
+                $notes = $primaryCareNotes;
+            }
+        }
+
+        return [
+            'flows' => $flows,
+            'notes' => $notes,
+        ];
+    }
+}
+
 if (!function_exists('getBoardingLateCheckoutDaycareBreakdown')) {
     function getBoardingLateCheckoutDaycareBreakdown($appointment, $checkout = null, int $thresholdHours = 1): array
     {

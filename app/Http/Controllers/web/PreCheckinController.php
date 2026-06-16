@@ -36,6 +36,15 @@ class PreCheckinController extends Controller
             $flows = is_array($decoded) ? $decoded : [];
         }
 
+        $autofill = applyPreviousStayAutofillToBoardingCheckin($appointment, $flows, $checkin?->notes);
+        $flows = $autofill['flows'];
+
+        if (!$checkin) {
+            $checkin = new Checkin();
+            $checkin->appointment_id = $appointment->id;
+        }
+        $checkin->notes = $autofill['notes'];
+
         $pets = $appointment->family_pets;
         if ($pets->isEmpty() && $appointment->pet) {
             $pets = collect([$appointment->pet]);

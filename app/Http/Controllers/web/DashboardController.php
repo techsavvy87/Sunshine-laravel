@@ -452,6 +452,22 @@ class DashboardController extends Controller
             $checkedIn->flows = json_decode($checkedIn->flows, true);
         }
 
+        if (isBoardingService($appointment->service)) {
+            $autofill = applyPreviousStayAutofillToBoardingCheckin(
+                $appointment,
+                is_array(optional($checkedIn)->flows) ? $checkedIn->flows : [],
+                $checkedIn?->notes
+            );
+
+            if (!$checkedIn) {
+                $checkedIn = new Checkin();
+                $checkedIn->appointment_id = $appointment->id;
+            }
+
+            $checkedIn->flows = $autofill['flows'];
+            $checkedIn->notes = $autofill['notes'];
+        }
+
         $resolveAppointmentServicePrice = function ($service, $petSize, $metadata = null) {
             if (!$service) {
                 return 0;
@@ -1984,7 +2000,7 @@ class DashboardController extends Controller
         $data = [];
 
         foreach ($appointmentIds as $appointmentId) {
-            $appointment = Appointment::with(['pet', 'customer.profile'])->find($appointmentId);
+            $appointment = Appointment::with(['pet', 'customer.profile', 'service.category'])->find($appointmentId);
             if (!$appointment) {
                 continue;
             }
@@ -1998,6 +2014,16 @@ class DashboardController extends Controller
 
             if (!is_array($flows)) {
                 $flows = [];
+            }
+
+            if (isBoardingService($appointment->service)) {
+                $autofill = applyPreviousStayAutofillToBoardingCheckin(
+                    $appointment,
+                    $flows,
+                    $checkin?->notes
+                );
+
+                $flows = $autofill['flows'];
             }
 
             $pets = $appointment->familyPets ?? collect();
