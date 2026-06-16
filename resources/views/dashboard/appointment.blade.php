@@ -2325,7 +2325,7 @@
                       <div class="rounded-box border border-base-300 bg-base-100 p-3 text-sm text-base-content/80 space-y-2">
                         <p>
                           <span class="font-medium text-base-content">Release and waiver:</span>
-                          I understand boarding activities carry inherent risks and that The Sunshine Spot is not liable for injury, illness, or loss during my petG��s stay, except where prohibited by law.
+                          I understand boarding activities carry inherent risks and that The Sunshine Spot is not liable for injury, illness, or loss during my pet's stay, except where prohibited by law.
                         </p>
                         <p>
                           <span class="font-medium text-base-content">Authorization to treat:</span>
@@ -2341,7 +2341,7 @@
                         </p>
                         <p>
                           <span class="font-medium text-base-content">Facility policy acknowledgement:</span>
-                          I acknowledge and agree to follow the facilityG��s boarding policies, pickup requirements, cancellation policy, and payment terms.
+                          I acknowledge and agree to follow the facility's boarding policies, pickup requirements, cancellation policy, and payment terms.
                         </p>
                       </div>
                       @php
