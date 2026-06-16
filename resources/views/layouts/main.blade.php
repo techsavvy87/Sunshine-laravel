@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="group/html">
   <head>
-    <title>@yield('title') - PawPrints</title>
+    <title>@yield('title') - Sunshine</title>
     <meta charset="UTF-8" />
     <meta name="author" content="Denish Navadiya" />
     <meta name="keywords" content="HTML, CSS, daisyui, tailwindcss, admin, client, dashboard, ui kit, component" />

@@ -3,7 +3,7 @@
 
   <div class="help-subsection">
     <h4 class="help-subsection-title">Permissions</h4>
-    <p>Permissions are the building blocks of access control in PawPrints. Each permission represents a specific feature or area of the system that can be controlled. Permissions are assigned to roles, and roles are assigned to users, creating a flexible access control system.</p>
+    <p>Permissions are the building blocks of access control in Sunshine. Each permission represents a specific feature or area of the system that can be controlled. Permissions are assigned to roles, and roles are assigned to users, creating a flexible access control system.</p>
     <p class="mt-2">Each permission can have four types of access: <strong>Create</strong> (can add new records), <strong>Read</strong> (can view records), <strong>Update</strong> (can edit records), and <strong>Delete</strong> (can remove records).</p>
 
     <p class="mt-3 mb-2"><strong>Available Permissions in the System:</strong></p>

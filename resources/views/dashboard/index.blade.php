@@ -6,7 +6,7 @@
     <h3 class="text-lg font-medium">Business Overview</h3>
     <div class="breadcrumbs hidden p-0 text-sm sm:inline">
         <ul>
-            <li><a href="./dashboards-ecommerce.html">PawPrints</a></li>
+            <li><a href="./dashboards-ecommerce.html">Sunshine</a></li>
             <li>Dashboards</li>
         </ul>
     </div>

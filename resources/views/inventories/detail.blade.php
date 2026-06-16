@@ -16,7 +16,7 @@
   <h3 class="text-lg font-medium">Inventory Detail</h3>
   <div class="breadcrumbs hidden p-0 text-sm sm:inline">
     <ul>
-      <li><a href="{{ route('dashboard') }}">PawPrints</a></li>
+      <li><a href="{{ route('dashboard') }}">Sunshine</a></li>
       <li><a href="{{ route('inventory-items') }}">Items</a></li>
       <li class="opacity-80">Detail</li>
     </ul>

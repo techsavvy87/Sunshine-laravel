@@ -991,7 +991,7 @@ if (!function_exists('geocodeChauffeurAddress')) {
         try {
             $response = \Illuminate\Support\Facades\Http::timeout(12)
                 ->withHeaders([
-                    'User-Agent' => 'PawPrints/1.0 (admin@pawprints.local)',
+                    'User-Agent' => 'Sunshine/1.0 (admin@Sunshine.local)',
                     'Accept' => 'application/json',
                 ])
                 ->get('https://nominatim.openstreetmap.org/search', [

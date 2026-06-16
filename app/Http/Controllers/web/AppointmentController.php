@@ -4398,14 +4398,14 @@ class AppointmentController extends Controller
         $body = trim($request->message);
 
         try {
-            $senderName = 'PawPrints Admin Team';
+            $senderName = 'Sunshine Admin Team';
             if (Auth::check()) {
                 $authUser = Auth::user()->load('profile');
                 $profileName = trim((($authUser->profile->first_name ?? '') . ' ' . ($authUser->profile->last_name ?? '')));
                 $senderName = $profileName ?: ($authUser->name ?? $senderName);
             }
 
-            $subject = 'Message from PawPrints Admin';
+            $subject = 'Message from Sunshine Admin';
             $messageData = [
                 'subject' => $subject,
                 'customer_name' => $customerName,

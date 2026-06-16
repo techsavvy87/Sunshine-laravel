@@ -19,6 +19,53 @@
     flex-shrink: 0;
   }
 
+  .kanban-toolbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .kanban-toolbar-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .kanban-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-left: auto;
+    min-width: 0;
+  }
+
+  .kanban-toolbar-scheduled {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  @media (min-width: 1280px) {
+    .kanban-toolbar-row {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      padding-bottom: 0.25rem;
+    }
+
+    .kanban-toolbar-main,
+    .kanban-toolbar-scheduled,
+    .kanban-toolbar-actions {
+      flex-wrap: nowrap;
+      width: auto;
+    }
+  }
+
   .kanban-board-wrap {
     margin-top: 0.875rem;
     flex: 1;
@@ -118,7 +165,7 @@
   </div>
   <div class="breadcrumbs hidden p-0 text-sm sm:inline">
     <ul>
-      <li><a href="{{ route('dashboard') }}">PawPrints</a></li>
+      <li><a href="{{ route('dashboard') }}">Sunshine</a></li>
       <li>Service Dashboard</li>
     </ul>
   </div>
@@ -134,22 +181,39 @@
   <div class="card bg-base-100 shadow mt-3 kanban-shell">
     <div class="card-body p-4">
       <form id="search_form" class="w-full kanban-toolbar" method="GET" action="{{ route('service-dashboard', $id) }}">
-        <div class="grow grid grid-cols-1 gap-2 xl:grid-cols-5">
-          <input type="text" class="input input-sm w-full" placeholder="Customer/Pet" name="customer" value="{{ $customerPet }}"/>
-          <select class="select select-sm w-full" name="staff" value="{{ $staffId }}">
-            <option value="" hidden selected>Choose Staff</option>
-            <option value="0">All Staffs</option>
-            @foreach($staffs as $staff)
-            <option value="{{ $staff->id }}" {{ $staffId == $staff->id ? 'selected' : '' }}>{{ $staff->profile ? $staff->profile->first_name . " " . $staff->profile->last_name : '' }}</option>
-            @endforeach
-          </select>
-          <div class="grid grid-cols-1 gap-2 xl:grid-cols-2">
-            <button type="submit" class="btn btn-soft btn-primary btn-sm max-sm:btn-square">
+        <div class="kanban-toolbar-row">
+          <div class="kanban-toolbar-main">
+            <input type="text" class="input input-sm w-full sm:w-44 xl:w-52 xl:shrink-0" placeholder="Customer/Pet" name="customer" value="{{ $customerPet }}"/>
+            <select class="select select-sm w-full sm:w-44 xl:w-48 xl:shrink-0" name="staff" value="{{ $staffId }}">
+              <option value="" hidden selected>Choose Staff</option>
+              <option value="0">All Staffs</option>
+              @foreach($staffs as $staff)
+              <option value="{{ $staff->id }}" {{ $staffId == $staff->id ? 'selected' : '' }}>{{ $staff->profile ? $staff->profile->first_name . " " . $staff->profile->last_name : '' }}</option>
+              @endforeach
+            </select>
+            <button type="submit" class="btn btn-soft btn-primary btn-sm shrink-0 max-sm:btn-square">
               <span class="iconify lucide--search size-4"></span>
               <span class="hidden sm:inline">Search</span>
             </button>
           </div>
-          <div class="flex justify-end xl:col-span-2 gap-2">
+          @if($showScheduledFilters)
+          <div class="kanban-toolbar-scheduled">
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-xs font-medium text-base-content/70 whitespace-nowrap">Scheduled</span>
+              <input type="date" name="scheduled_date" value="{{ $scheduledDate }}" class="input input-bordered input-sm w-full sm:w-40 xl:w-40" onchange="clearScheduledRangeAndSubmit(this)" />
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-xs font-medium text-base-content/70 whitespace-nowrap">Start</span>
+              <input type="date" name="scheduled_start_date" value="{{ $scheduledStartDate }}" class="input input-bordered input-sm w-full sm:w-40 xl:w-40" />
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span class="text-xs font-medium text-base-content/70 whitespace-nowrap">End</span>
+              <input type="date" name="scheduled_end_date" value="{{ $scheduledEndDate }}" class="input input-bordered input-sm w-full sm:w-40 xl:w-40" />
+            </div>
+            <button type="submit" class="btn btn-outline btn-primary btn-sm shrink-0">Apply Range</button>
+          </div>
+          @endif
+          <div class="kanban-toolbar-actions">
             <a href="{{ route('list-incident-reports', ['serviceId' => $id]) }}" class="btn btn-outline btn-warning btn-sm max-sm:btn-square">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-scroll-text-icon lucide-scroll-text"><path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/></svg>
               <span class="hidden sm:inline">Incident Reports</span>
@@ -184,7 +248,7 @@
               <div class="card-body">
                 <div class="kanban-col-head flex items-center justify-between" style="background-color: {{ $statusColors[$statusKey] ?? '#f3f4f6' }};">
                   <h4 class="font-semibold text-sm xl:text-base" style="color: black">{{ $statusLabel }}</h4>
-                  <span class="badge badge-sm badge-outline">{{ $appointments->where('status', $statusKey)->count() }}</span>
+                  <span class="badge badge-sm badge-outline">{{ $statusKey === 'checked_in' ? $scheduledAppointments->count() : $appointments->where('status', $statusKey)->count() }}</span>
                   @if ($statusKey == 'checked_in')
                   <a class="btn btn-square btn-ghost btn-xs" href="{{ route('add-appointment', ['service_id' => $id]) }}" title="Add Appointment">
                     <span class="iconify lucide--plus size-3 font-medium"></span>
@@ -192,7 +256,7 @@
                   @endif
                 </div>
                 <div class="space-y-2 kanban-col-list">
-                  @forelse($appointments->where('status', $statusKey) as $appointment)
+                  @forelse(($statusKey === 'checked_in' ? $scheduledAppointments : $appointments->where('status', $statusKey)) as $appointment)
                     @php
                       $cardPets = $appointment->family_pets;
                       if ($cardPets->isEmpty() && $appointment->pet) {
@@ -262,4 +326,25 @@
 @endsection
 
 @section('page-js')
+<script>
+  function clearScheduledRangeAndSubmit(input) {
+    const form = input.form;
+    if (!form) {
+      return;
+    }
+
+    const rangeStart = form.querySelector('input[name="scheduled_start_date"]');
+    const rangeEnd = form.querySelector('input[name="scheduled_end_date"]');
+
+    if (rangeStart) {
+      rangeStart.value = '';
+    }
+
+    if (rangeEnd) {
+      rangeEnd.value = '';
+    }
+
+    form.submit();
+  }
+</script>
 @endsection

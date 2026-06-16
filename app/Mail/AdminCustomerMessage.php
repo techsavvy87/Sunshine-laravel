@@ -22,7 +22,7 @@ class AdminCustomerMessage extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: $this->messageData['subject'] ?? 'Message from PawPrints Team',
+            subject: $this->messageData['subject'] ?? 'Message from Sunshine Team',
         );
     }
 

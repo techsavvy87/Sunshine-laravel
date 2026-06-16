@@ -212,7 +212,7 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => true,
-            'message' => 'Your email address is verified and PawPrints account is activated now.',
+            'message' => 'Your email address is verified and Sunshine account is activated now.',
             'results' => NULL
         ], 200);
     }

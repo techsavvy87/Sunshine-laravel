@@ -311,9 +311,38 @@ class DashboardController extends Controller
         $customerPet = $request->get('customer');
         $staffId = $request->get('staff');
         $service = Service::find($id);
+        $showScheduledFilters = isBoardingService($service);
+        $scheduledDateInput = $request->get('scheduled_date');
+        $scheduledStartDateInput = $request->get('scheduled_start_date');
+        $scheduledEndDateInput = $request->get('scheduled_end_date');
 
+        $scheduledDate = $request->filled('scheduled_date')
+            ? Carbon::parse($scheduledDateInput)->toDateString()
+            : Carbon::today()->toDateString();
+        $scheduledStartDate = $request->filled('scheduled_start_date')
+            ? Carbon::parse($scheduledStartDateInput)->toDateString()
+            : '';
+        $scheduledEndDate = $request->filled('scheduled_end_date')
+            ? Carbon::parse($scheduledEndDateInput)->toDateString()
+            : '';
+
+        $useScheduledRange = !$request->filled('scheduled_date') && ($scheduledStartDate !== '' || $scheduledEndDate !== '');
+
+        if ($useScheduledRange) {
+            $rangeStart = Carbon::parse($scheduledStartDate);
+            $rangeEnd = Carbon::parse($scheduledEndDate);
+
+            if ($rangeStart->gt($rangeEnd)) {
+                [$rangeStart, $rangeEnd] = [$rangeEnd, $rangeStart];
+            }
+
+            $scheduledStartDate = $rangeStart->toDateString();
+            $scheduledEndDate = $rangeEnd->toDateString();
+        }
+
+        $appointmentsQuery = Appointment::where('service_id', $id);
         if ($customerPet) {
-            $appointments = Appointment::where('service_id', $id)->where(function ($query) use ($customerPet) {
+            $appointmentsQuery = $appointmentsQuery->where(function ($query) use ($customerPet) {
                 $query->whereHas('customer', function ($q) use ($customerPet) {
                     $q->where('email', 'like', "%{$customerPet}%")
                         ->orWhereHas('profile', function ($q2) use ($customerPet) {
@@ -324,20 +353,19 @@ class DashboardController extends Controller
                     $q->where('name', 'like', "%{$customerPet}%");
                 });
             });
-        } else {
-            $appointments = Appointment::where('service_id', $id);
         }
 
         if ($staffId)
-            $appointments = $appointments->where('staff_id', $staffId);
+            $appointmentsQuery = $appointmentsQuery->where('staff_id', $staffId);
 
         $infoMessage = null;
+        $scheduledAppointments = collect();
         if (isGroupClassService($service)) {
             // Get only the first upcoming appointment per pet and all non-checked_in appointments for group classes
             $now = Carbon::now();
 
             // Get appointments with status != 'checked_in' (all statuses)
-            $tempAppointments = clone $appointments;
+            $tempAppointments = clone $appointmentsQuery;
             $nonCheckedInAppointments = $tempAppointments
                 ->where('status', '!=', 'checked_in')
                 ->orderBy('date')
@@ -345,7 +373,7 @@ class DashboardController extends Controller
                 ->get();
 
             // Get future checked_in appointments
-            $checkedInAppointments = $appointments
+            $checkedInAppointments = (clone $appointmentsQuery)
                 ->where('status', 'checked_in')
                 ->where('date', '>=', $now->toDateString())
                 ->orderBy('date')
@@ -364,13 +392,37 @@ class DashboardController extends Controller
                     ['start_time', 'asc']
                 ])
                 ->values();
+            $scheduledAppointments = $appointments->where('status', 'checked_in')->values();
             $infoMessage = 'Showing only the next upcoming appointment per pet in Scheduled. Additional future sessions exist and will appear at the completion of the current session.';
-        } else {
-            $appointments = $appointments
+        } elseif ($showScheduledFilters) {
+            $appointments = (clone $appointmentsQuery)
                 ->with(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel'])
                 ->orderBy('date', 'desc')
                 ->orderBy('start_time', 'desc')
                 ->get();
+
+            $scheduledQuery = (clone $appointmentsQuery)
+                ->with(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel'])
+                ->where('status', 'checked_in');
+
+            if ($scheduledStartDate !== '' && $scheduledEndDate !== '') {
+                $scheduledQuery->whereDate('date', '>=', $scheduledStartDate)
+                    ->whereDate('date', '<=', $scheduledEndDate);
+            } else {
+                $scheduledQuery->whereDate('date', $scheduledDate);
+            }
+
+            $scheduledAppointments = $scheduledQuery
+                ->orderBy('date', 'asc')
+                ->orderBy('start_time', 'asc')
+                ->get();
+        } else {
+            $appointments = (clone $appointmentsQuery)
+                ->with(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel'])
+                ->orderBy('date', 'desc')
+                ->orderBy('start_time', 'desc')
+                ->get();
+            $scheduledAppointments = $appointments->where('status', 'checked_in')->values();
         }
 
         $appointments->load(['pet', 'customer.profile', 'staff.profile', 'catRoom', 'kennel']);
@@ -386,7 +438,7 @@ class DashboardController extends Controller
             $query->whereNot('title', 'customer');
         })->get();
 
-        return view('dashboard.kanban-service', compact('appointments', 'customerPet', 'staffId', 'staffs', 'id', 'service', 'infoMessage'));
+        return view('dashboard.kanban-service', compact('appointments', 'scheduledAppointments', 'customerPet', 'staffId', 'staffs', 'id', 'service', 'infoMessage', 'showScheduledFilters', 'scheduledDate', 'scheduledStartDate', 'scheduledEndDate'));
     }
 
     public function appointmentDetail($id)
@@ -1058,6 +1110,10 @@ class DashboardController extends Controller
     {
         $service = Service::find($id);
         $infoMessage = null;
+        $showScheduledFilters = isBoardingService($service);
+        $scheduledDate = Carbon::today()->toDateString();
+        $scheduledStartDate = '';
+        $scheduledEndDate = '';
         if (isGroupClassService($service)) {
             // Apply same logic as serviceDashboard for group classes
             $now = Carbon::now();
@@ -1075,6 +1131,43 @@ class DashboardController extends Controller
                 return $petAppointments->first();
             })->values();
             $infoMessage = 'Showing only the next upcoming appointment per pet in Scheduled. Additional future sessions exist and will appear at the completion of the current session.';
+        } elseif ($showScheduledFilters) {
+            $scheduledDateInput = $request->query('scheduled_date');
+            $scheduledStartDateInput = $request->query('scheduled_start_date');
+            $scheduledEndDateInput = $request->query('scheduled_end_date');
+
+            if ($request->filled('scheduled_start_date') || $request->filled('scheduled_end_date')) {
+                $rangeStart = Carbon::parse($scheduledStartDateInput ?: $scheduledEndDateInput);
+                $rangeEnd = Carbon::parse($scheduledEndDateInput ?: $scheduledStartDateInput);
+
+                if ($rangeStart->gt($rangeEnd)) {
+                    [$rangeStart, $rangeEnd] = [$rangeEnd, $rangeStart];
+                }
+
+                $scheduledStartDate = $rangeStart->toDateString();
+                $scheduledEndDate = $rangeEnd->toDateString();
+
+                $checkedInAppointments = Appointment::with(['pet', 'customer.profile', 'staff.profile'])
+                    ->where('service_id', $id)
+                    ->where('status', 'checked_in')
+                    ->whereDate('date', '>=', $scheduledStartDate)
+                    ->whereDate('date', '<=', $scheduledEndDate)
+                    ->orderBy('date')
+                    ->orderBy('start_time')
+                    ->get();
+            } else {
+                $scheduledDate = $request->filled('scheduled_date')
+                    ? Carbon::parse($scheduledDateInput)->toDateString()
+                    : Carbon::today()->toDateString();
+
+                $checkedInAppointments = Appointment::with(['pet', 'customer.profile', 'staff.profile'])
+                    ->where('service_id', $id)
+                    ->where('status', 'checked_in')
+                    ->whereDate('date', $scheduledDate)
+                    ->orderBy('date')
+                    ->orderBy('start_time')
+                    ->get();
+            }
         } else {
             $checkedInAppointments = Appointment::where('service_id', $id)
                 ->where('status', 'checked_in')
@@ -1096,7 +1189,7 @@ class DashboardController extends Controller
                 ->get();
         }
 
-        return view('dashboard.list-service', compact('checkedInAppointments', 'inProgressAppointments', 'completedAppointments', 'completedCount', 'id', 'service', 'issuedAppointments', 'infoMessage'));
+        return view('dashboard.list-service', compact('checkedInAppointments', 'inProgressAppointments', 'completedAppointments', 'completedCount', 'id', 'service', 'issuedAppointments', 'infoMessage', 'showScheduledFilters', 'scheduledDate', 'scheduledStartDate', 'scheduledEndDate'));
     }
 
 

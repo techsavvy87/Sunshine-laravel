@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="group/html">
   <head>
-    <title>@yield('title') - PawPrints</title>
+    <title>@yield('title') - Sunshine</title>
     <meta charset="UTF-8" />
     <meta name="author" content="Denish Navadiya" />
     <meta name="keywords" content="HTML, CSS, daisyui, tailwindcss, admin, client, dashboard, ui kit, component" />
@@ -47,7 +47,7 @@
                   <span class="iconify lucide--star size-4 text-orange-600"></span>
                 </div>
                 <p class="mt-1 text-lg font-medium">Sean Verne</p>
-                <p class="text-base-content/60 text-sm">Creator of PawPrints</p>
+                <p class="text-base-content/60 text-sm">Creator of Sunshine</p>
               </div>
               <p class="mt-2 text-center text-sm">
                 This is the ultimate way to track your services

@@ -9,7 +9,7 @@
   <h3 class="text-lg font-medium">Update Holiday</h3>
   <div class="breadcrumbs hidden p-0 text-sm sm:inline">
     <ul>
-      <li><a href="{{ route('dashboard') }}">PawPrints</a></li>
+      <li><a href="{{ route('dashboard') }}">Sunshine</a></li>
       <li><a href="{{ route('holidays') }}">Holidays</a></li>
       <li class="opacity-80">Update</li>
     </ul>
@@ -195,7 +195,7 @@
   <h3 class="text-lg font-medium">Update Holiday</h3>
   <div class="breadcrumbs hidden p-0 text-sm sm:inline">
     <ul>
-      <li><a href="{{ route('dashboard') }}">PawPrints</a></li>
+      <li><a href="{{ route('dashboard') }}">Sunshine</a></li>
       <li><a href="{{ route('holidays') }}">Holidays</a></li>
       <li class="opacity-80">Update</li>
     </ul>

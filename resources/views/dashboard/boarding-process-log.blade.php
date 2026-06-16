@@ -15,7 +15,7 @@
   <h3 class="text-lg font-medium">Boarding Process Log</h3>
   <div class="breadcrumbs hidden p-0 text-sm sm:inline">
     <ul>
-      <li><a href="{{ route('dashboard') }}">PawPrints</a></li>
+      <li><a href="{{ route('dashboard') }}">Sunshine</a></li>
       <li>Boarding Process Log</li>
     </ul>
   </div>
@@ -102,7 +102,7 @@
       </div>
       @else
       <div class="text-center py-8">
-        <p class="text-base-content/70">No boarding appointments on property found.</p>
+        <p class="text-base-content/70">No process logs have been created yet. Click "Create Process Log" to start today's boarding process.</p>
       </div>
       @endif
     </div>

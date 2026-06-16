@@ -315,7 +315,7 @@ class PetVaccineExpirationMonitor
     protected function buildMailData(PetProfile $pet, string $alertType, array $entries, User $recipient): array
     {
         $recipientName = trim((($recipient->profile->first_name ?? '') . ' ' . ($recipient->profile->last_name ?? '')));
-        $recipientName = $recipientName ?: ($recipient->name ?: 'PawPrints customer');
+        $recipientName = $recipientName ?: ($recipient->name ?: 'Sunshine customer');
 
         $subject = $alertType === PetVaccinationAlert::TYPE_EXPIRED
             ? 'Urgent: Pet vaccine expired'
