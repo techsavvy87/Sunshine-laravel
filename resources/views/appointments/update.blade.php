@@ -26,6 +26,52 @@
       width: 100% !important;
       min-width: 0 !important;
     }
+
+    /*
+      Prevent the browser from jumping back to the top when dynamic Select2
+      fields are rebuilt/shown/hidden while the user is scrolling.
+    */
+    html,
+    body {
+      overflow-anchor: none;
+      scroll-behavior: auto !important;
+      overflow-x: hidden !important;
+    }
+
+    /*
+      Select2 appends its dropdown to the page body by default.
+      On this layout it can increase document width and create a horizontal
+      scrollbar while the dropdown is open. Keep the dropdown inside the
+      visible viewport and prevent long option text from stretching the page.
+    */
+    .select2-container--open,
+    .select2-dropdown {
+      max-width: calc(100vw - 32px) !important;
+      box-sizing: border-box !important;
+    }
+
+    .select2-dropdown {
+      overflow-x: hidden !important;
+    }
+
+    .select2-search--dropdown .select2-search__field {
+      width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .select2-results__option,
+    .select2-selection__rendered {
+      max-width: 100% !important;
+      overflow-x: hidden !important;
+      text-overflow: ellipsis;
+    }
+
+    .select2-results__option {
+      white-space: normal !important;
+      word-break: break-word !important;
+    }
+
     .select2-container--default.select2-container--disabled .select2-selection--multiple {
       background-color: unset !important;
     }

@@ -26,6 +26,51 @@
       width: 100% !important;
       min-width: 0 !important;
     }
+
+    /*
+      Prevent the browser from jumping back to the top when dynamic Select2
+      fields are rebuilt/shown/hidden while the user is scrolling.
+    */
+    html,
+    body {
+      overflow-anchor: none;
+      scroll-behavior: auto !important;
+      overflow-x: hidden !important;
+    }
+
+    /*
+      Select2 appends its dropdown to the page body by default.
+      On this layout it can increase document width and create a horizontal
+      scrollbar while the dropdown is open. Keep the dropdown inside the
+      visible viewport and prevent long option text from stretching the page.
+    */
+    .select2-container--open,
+    .select2-dropdown {
+      max-width: calc(100vw - 32px) !important;
+      box-sizing: border-box !important;
+    }
+
+    .select2-dropdown {
+      overflow-x: hidden !important;
+    }
+
+    .select2-search--dropdown .select2-search__field {
+      width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .select2-results__option,
+    .select2-selection__rendered {
+      max-width: 100% !important;
+      overflow-x: hidden !important;
+      text-overflow: ellipsis;
+    }
+
+    .select2-results__option {
+      white-space: normal !important;
+      word-break: break-word !important;
+    }
   </style>
 @endsection
 
@@ -215,7 +260,43 @@
   <script type="module" src="https://unpkg.com/cally"></script>
 
   <script>
+
+    /*
+      Several fields are rebuilt dynamically with Select2 and then trigger
+      change events programmatically. In some browsers this can force the page
+      back to the top because the rebuilt Select2 input receives focus.
+      This keeps the current scroll position after programmatic changes only,
+      without changing the existing form logic.
+    */
+    function preserveScrollAfterProgrammaticChange() {
+      $(document).on('change', 'select, input', function(event) {
+        if (event.originalEvent) {
+          return;
+        }
+
+        const scrollX = window.scrollX || window.pageXOffset || 0;
+        const scrollY = window.scrollY || window.pageYOffset || 0;
+
+        if (scrollY <= 0) {
+          return;
+        }
+
+        window.requestAnimationFrame(function() {
+          if ((window.scrollY || window.pageYOffset || 0) < scrollY) {
+            window.scrollTo(scrollX, scrollY);
+          }
+        });
+
+        window.setTimeout(function() {
+          if ((window.scrollY || window.pageYOffset || 0) < scrollY) {
+            window.scrollTo(scrollX, scrollY);
+          }
+        }, 50);
+      });
+    }
+
     $(document).ready(function() {
+      preserveScrollAfterProgrammaticChange();
       window.initialKennels = [
         @foreach($kennels as $kennel)
           { id: '{{ $kennel->id }}', name: '{{ addslashes($kennel->name) }}' },
