@@ -66,7 +66,7 @@ class KennelController extends Controller
         };
 
         $boardingAppointments = Appointment::with(['pet', 'customer'])
-            ->whereNotIn('status', ['cancelled', 'canceled', 'no_show'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })
@@ -526,7 +526,7 @@ class KennelController extends Controller
 
         $activeBoardingAppointment = Appointment::with('pet')
             ->where('kennel_id', $kennel->id)
-            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })

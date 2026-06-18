@@ -32,7 +32,7 @@
                             type="search" onkeydown="handleSearch(event)" value="{{ $search }}" />
                     </label>
                 </div>
-                @if (hasPermission(30, 'can_create'))
+                @if (hasPermission(24, 'can_create'))
                 <a aria-label="Create seller link" class="btn btn-primary btn-sm max-sm:btn-square"
                     href="{{ route('add-discount') }}">
                     <span class="iconify lucide--plus size-4"></span>
@@ -130,15 +130,14 @@
                             <td>{{ $discount->end_date ? $discount->end_date->format('M d, Y h:i A') : '' }}</td>
                             <td>
                                 <div class="flex items-center gap-2">
-                                    @if (hasPermission(30, 'can_update'))
+                                    @if (hasPermission(24, 'can_update'))
                                     <a aria-label="Edit discount"
                                         class="btn btn-square btn-primary btn-outline btn-xs border-transparent"
                                         href="{{ route('edit-discount', ['id' => $discount->id]) }}">
                                         <span class="iconify lucide--pencil" style="font-size: 0.875rem;"></span>
                                     </a>
                                     @endif
-                                    @if (hasPermission(30, 'can_delete'))
-
+                                    @if (hasPermission(24, 'can_delete'))
                                     <button aria-label="Dummy delete seller" onclick="confirmDelete({{ $discount }})"
                                         class="btn btn-square btn-error btn-outline btn-sm border-transparent">
                                         <span class="iconify lucide--trash size-4"></span>

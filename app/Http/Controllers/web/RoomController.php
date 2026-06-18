@@ -37,7 +37,7 @@ class RoomController extends Controller
         $today = Carbon::today()->toDateString();
 
         $activeBoardingAppointments = Appointment::with(['pet', 'catRoom', 'customer'])
-            ->whereNotIn('status', ['cancelled', 'canceled', 'no_show'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })

@@ -32,11 +32,22 @@ use App\Http\Controllers\web\FacilityAddressController;
 use App\Http\Controllers\web\KennelController;
 use App\Http\Controllers\web\RoomController;
 use App\Http\Controllers\web\PreCheckinController;
+use App\Http\Controllers\web\PaymentController;
+use App\Http\Controllers\web\AdminPaymentController;
+use App\Http\Controllers\web\StripeWebhookController;
 
 Route::controller(PreCheckinController::class)->group(function () {
     Route::get('/pre-checkin/{token}', 'show')->name('pre-checkin.show');
     Route::post('/pre-checkin/{token}', 'save')->name('pre-checkin.save');
 });
+
+Route::controller(PaymentController::class)->group(function () {
+    Route::get('/payment/{token}', 'showPaymentPage')->name('payment.page');
+    Route::post('/payment/create-intent', 'createPaymentIntent')->name('payment.create-intent');
+    Route::post('/payment/confirm', 'confirmPayment')->name('payment.confirm');
+});
+
+Route::post('/webhook/stripe', [StripeWebhookController::class, 'handle'])->name('stripe.webhook')->withoutMiddleware(['csrf']);
 
 Route::controller(AuthController::class)->group(function () {
     Route::get('/login', 'login')->name('login');
@@ -295,6 +306,12 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/appointment/view/calendar', 'viewCalendar')->name('view-appointment-calendar')->middleware('ensure.permission:3,can_read');
         Route::post('/appointment/validate', 'getValidationInfo')->name('get-validation-info')->middleware('ensure.permission:3,can_read');
         Route::post('/appointment/validate-assignment', 'validateAssignment')->name('validate-assignment')->middleware('ensure.permission:3,can_read');
+    });
+
+    Route::controller(AdminPaymentController::class)->group(function () {
+        Route::get('/financials/payments', 'payments')->name('financials.payments');
+        Route::get('/financials/payouts', 'payouts')->name('financials.payouts');
+        Route::post('/financials/payouts/withdraw', 'withdraw')->name('financials.payouts.withdraw')->middleware('ensure.permission:14,can_create');
     });
 
     Route::controller(ArchiveController::class)->group(function () {

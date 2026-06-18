@@ -849,7 +849,7 @@ class AppointmentController extends Controller
     private function getOverlappingBoardingAppointmentsQuery(Carbon $newStart, Carbon $newEnd, ?int $excludeAppointmentId = null)
     {
         $query = Appointment::query()
-            ->whereNotIn('status', ['cancelled', 'no_show'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', function ($q) {
                 $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })
@@ -1789,11 +1789,16 @@ class AppointmentController extends Controller
 
         $capacity  = Kennel::count() + $this->spaceRoomsQuery()->count();
         $occupiedKennelCount = Appointment::whereNotNull('kennel_id')
-            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']))
             ->distinct('kennel_id')
             ->count('kennel_id');
-        $occupied = $occupiedKennelCount + $this->spaceRoomsQuery()->where('status', '!=', 'Available')->count();
+        $occupiedSpaceRoomCount = Appointment::whereNotNull('cat_room_id')
+            ->whereIn('status', appointment_occupying_statuses())
+            ->whereHas('service.category', fn ($q) => $q->whereRaw('LOWER(name) LIKE ?', ['%boarding%']))
+            ->distinct('cat_room_id')
+            ->count('cat_room_id');
+        $occupied = $occupiedKennelCount + $occupiedSpaceRoomCount;
         $available_status = $occupied / $capacity < 0.5? true : false;
 
         $selectedPetIds = collect($request->input('pet_ids', []))
@@ -4011,7 +4016,7 @@ class AppointmentController extends Controller
 
     public function saveInvoice(Request $request, $id)
     {
-        $request->validate([
+        $rules = [
             'invoice_number' => 'required|string',
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -4026,7 +4031,13 @@ class AppointmentController extends Controller
             'payment_amount' => 'nullable|numeric|min:0',
             'payment_method' => 'nullable|in:cash,check,cc',
             'payment_notes' => 'nullable|string|max:1000',
-        ]);
+        ];
+
+        if (strtolower((string) $request->status) === 'paid') {
+            $rules['payment_method'] = 'required|in:cash';
+        }
+
+        $request->validate($rules);
 
         $appointment = Appointment::find($id);
         if (!$appointment) {
@@ -4135,6 +4146,38 @@ class AppointmentController extends Controller
             'discount_amount' => $resolvedDiscountAmount,
         ];
 
+        $paymentLink = null;
+        $externalPaymentUrl = null;
+        if ($request->status === 'sent') {
+            // compute subtotal and tax so payment link includes tax
+            $subtotal = $invoiceItemSummary['total_service_price'] - $resolvedDiscountAmount + $invoiceItemSummary['total_inventory_amount'];
+            $stateTaxRate = isBoardingService($appointment->service) ? floatval(config('billing.state_tax_rate', 7)) : 0;
+            $stateTaxAmount = round($subtotal * ($stateTaxRate / 100), 2);
+            $totalAmount = round($subtotal + $stateTaxAmount, 2);
+
+            // Reuse existing pending/processing payment link for this invoice if present
+            $paymentLink = \App\Models\PaymentLink::where('invoice_id', $invoice->id)
+                ->whereIn('status', ['pending', 'processing'])
+                ->latest()
+                ->first();
+
+            if ($paymentLink) {
+                $paymentLink->amount = $totalAmount;
+                $paymentLink->currency = 'usd';
+                $paymentLink->expires_at = now()->addDays(30);
+                $paymentLink->save();
+            } else {
+                $paymentLink = createPaymentLink($invoice, $appointment, $totalAmount);
+            }
+            // Try to create a Stripe Checkout Session and provide that URL in the invoice email
+            try {
+                $externalPaymentUrl = createInvoiceCheckoutSession($invoice, $totalAmount);
+            } catch (\Exception $e) {
+                // fallback to internal payment page
+                $externalPaymentUrl = null;
+            }
+        }
+
         if ($request->status === 'paid' && $request->payment_amount && $request->payment_method) {
             $transaction = new Transaction;
             $transaction->appointment_id = $appointment->id;
@@ -4150,7 +4193,12 @@ class AppointmentController extends Controller
         $emailFailed = false;
         if ($request->status === 'sent' || ($request->status === 'paid' && $request->payment_amount)) {
             try {
-                $this->sendInvoiceEmail($invoice, $appointment, $items, $discountInfo);
+                // If an external Stripe Checkout URL was created, pass that along for the email
+                if ($externalPaymentUrl) {
+                    $this->sendInvoiceEmail($invoice, $appointment, $items, $discountInfo, $externalPaymentUrl);
+                } else {
+                    $this->sendInvoiceEmail($invoice, $appointment, $items, $discountInfo, $paymentLink);
+                }
             } catch (\Throwable $e) {
                 $emailFailed = true;
                 Log::error('Failed to send invoice email after saving invoice.', [
@@ -4163,7 +4211,7 @@ class AppointmentController extends Controller
         }
 
         $responseMessage = $request->status === 'sent'
-            ? 'Invoice saved and sent successfully.'
+            ? 'Invoice saved and sent successfully. <br>Payment link sent by email. Please ask the customer to complete payment using the link.'
             : ($request->status === 'paid' && $request->payment_amount
                 ? 'Invoice saved and payment recorded successfully.'
                 : 'Invoice saved successfully.');
@@ -4189,7 +4237,7 @@ class AppointmentController extends Controller
         return $user->roles()->whereRaw('LOWER(title) in (?, ?)', ['owner', 'admin'])->exists();
     }
 
-    private function sendInvoiceEmail($invoice, $appointment, $items, $discountInfo = [])
+    private function sendInvoiceEmail($invoice, $appointment, $items, $discountInfo = [], $paymentLinkOrUrl = null)
     {
         $invoice->loadMissing('items');
         $invoiceItemSummary = $this->summarizeInvoiceItemsFromInvoice($invoice);
@@ -4209,6 +4257,13 @@ class AppointmentController extends Controller
         $stateTaxRate = isBoardingService($appointment->service) ? floatval(config('billing.state_tax_rate', 7)) : 0;
         $stateTaxAmount = round($subtotalAmount * ($stateTaxRate / 100), 2);
         $totalAmount = $subtotalAmount + $stateTaxAmount;
+
+        $paymentLinkUrl = null;
+        if (is_string($paymentLinkOrUrl) && !empty($paymentLinkOrUrl)) {
+            $paymentLinkUrl = $paymentLinkOrUrl;
+        } elseif ($paymentLinkOrUrl) {
+            $paymentLinkUrl = getPaymentLinkUrl($paymentLinkOrUrl);
+        }
 
         $emailData = [
             'invoice_number' => $invoice->invoice_number,
@@ -4235,10 +4290,16 @@ class AppointmentController extends Controller
             'late_checkout_hours' => 0,
             'late_checkout_daycare_fee' => 0,
             'total' => $totalAmount,
-            'total_amount' => $totalAmount
+            'total_amount' => $totalAmount,
+            'payment_link_url' => $paymentLinkUrl,
         ];
 
-        // Mail::to($invoice->email)->send(new InvoiceMail($emailData));
+        try {
+            Mail::to($invoice->email)->send(new InvoiceMail($emailData));
+            Log::info('Invoice email sent', ['invoice_id' => $invoice->id, 'to' => $invoice->email]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send invoice email', ['invoice_id' => $invoice->id, 'to' => $invoice->email, 'error' => $e->getMessage()]);
+        }
     }
 
     private function summarizeInvoiceItemsFromInvoice(Invoice $invoice): array
@@ -4588,6 +4649,7 @@ class AppointmentController extends Controller
             $appointment->status = 'finished';
             $appointment->save();
             appointment_audit_log($appointment->id, "Appointment status changed to " . appointment_status_label('finished') . ".");
+            $this->releaseCatRoomIfUnused($appointment->cat_room_id, $appointment->id);
         }
 
         if ($isPackageAppointment && $appointment->metadata && isset($appointment->metadata['package_id'])) {
@@ -4772,7 +4834,7 @@ class AppointmentController extends Controller
             ->when($excludingAppointmentId, function ($query) use ($excludingAppointmentId) {
                 $query->where('id', '!=', $excludingAppointmentId);
             })
-            ->whereIn('status', ['checked_in', 'in_progress'])
+            ->whereIn('status', appointment_occupying_statuses())
             ->whereHas('service.category', function ($query) {
                 $query->whereRaw('LOWER(name) LIKE ?', ['%boarding%']);
             })
@@ -4827,6 +4889,9 @@ class AppointmentController extends Controller
         if (in_array($newStatus, ['cancelled', 'no_show'])) {
             $this->saveCancellationRecord($appointment, $newStatus);
             $this->releaseTimeSlots($appointment);
+        }
+
+        if (in_array($newStatus, appointment_non_occupying_statuses(), true)) {
             $this->releaseCatRoomIfUnused($appointment->cat_room_id, $appointment->id);
         } elseif ($newStatus === 'checked_in' && isBoardingService($appointment->service)) {
             $this->markCatRoomOutOfService($appointment->cat_room_id);

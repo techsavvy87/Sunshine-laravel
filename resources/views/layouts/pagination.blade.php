@@ -1,7 +1,10 @@
 @php
   $perPageOptions = $per_page_options ?? [10, 20, 50, 100];
   $defaultPerPage = $default_per_page ?? 20;
-  $currentPerPage = request('per_page') !== null && request('per_page') !== '' ? (int) request('per_page') : null;
+  $perPageQuery = $per_page_query ?? 'per_page';
+  $pageQuery = $page_query ?? 'page';
+  $changePerPageFn = $change_per_page_fn ?? ('changePerPage_' . preg_replace('/[^A-Za-z0-9_]/', '_', $perPageQuery));
+  $currentPerPage = request($perPageQuery) !== null && request($perPageQuery) !== '' ? (int) request($perPageQuery) : null;
 @endphp
 
 <div class="flex flex-col gap-4 p-6 lg:flex-row lg:items-center lg:justify-between">
@@ -10,7 +13,7 @@
   <div class="flex items-center gap-3 text-sm text-base-content/80">
     <span class="hidden sm:inline">Per page</span>
 
-    <select class="select select-xs w-20" onchange="changePerPage(this.value)">
+    <select class="select select-xs w-20" onchange="{{ $changePerPageFn }}(this.value)">
       @foreach($perPageOptions as $opt)
         <option value="{{ $opt }}"
           {{ $currentPerPage === $opt || ($currentPerPage === null && $opt == $defaultPerPage) ? 'selected' : '' }}>
@@ -84,10 +87,10 @@
 </div>
 
 <script>
-  function changePerPage(perPage) {
+  function {{ $changePerPageFn }}(perPage) {
     const url = new URL(window.location.href);
-    url.searchParams.set('per_page', perPage);
-    url.searchParams.delete('page'); // reset page
+    url.searchParams.set(@json($perPageQuery), perPage);
+    url.searchParams.delete(@json($pageQuery));
     window.location.href = url.toString();
   }
 </script>

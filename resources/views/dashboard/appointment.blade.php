@@ -3342,6 +3342,9 @@
           <option value="check">Check</option>
           <option value="cc">Credit Card</option>
         </select>
+        <div id="payment_method_static" class="input input-bordered w-full input-sm hidden">
+          Cash
+        </div>
       </fieldset>
       <fieldset class="fieldset">
         <legend class="fieldset-legend">Notes</legend>
@@ -6241,6 +6244,27 @@
     }
   }
 
+  function renderPaymentMethodOptions(status) {
+    const normalizedStatus = (status || '').toLowerCase();
+    const paymentMethod = $('#payment_method');
+    paymentMethod.empty();
+
+    paymentMethod.append($('<option>').val('').text('Select payment type'));
+    paymentMethod.append($('<option>').val('cash').text('Cash'));
+
+    if (normalizedStatus !== 'paid') {
+      paymentMethod.append($('<option>').val('check').text('Check'));
+      paymentMethod.append($('<option>').val('cc').text('Credit Card'));
+      paymentMethod.val('');
+      $('#payment_method').removeClass('hidden');
+      $('#payment_method_static').addClass('hidden');
+    } else {
+      paymentMethod.val('cash');
+      $('#payment_method').addClass('hidden');
+      $('#payment_method_static').removeClass('hidden');
+    }
+  }
+
   function saveInvoice(appointmentId) {
     const invoice_number = $('#invoice_number').val();
     const first_name = $('#first_name').val();
@@ -6284,7 +6308,7 @@
       });
 
       $('#payment_amount').val(totals.totalAmount.toFixed(2));
-      $('#payment_method').val('');
+      renderPaymentMethodOptions(status);
       $('#payment_notes').val('');
 
       const paymentDiscountSummary = $('#payment_discount_summary');
@@ -6371,7 +6395,7 @@
 
         if (response.status) {
           updateDetailSectionSummaryFromInvoice(items, currentTotals);
-          $('#success_message').text(response.message || 'Invoice saved successfully!');
+          $('#success_message').html(response.message || 'Invoice saved successfully!');
           success_modal.showModal();
         } else {
           $('#alert_message').text('Error: ' + (response.message || 'Unknown error'));

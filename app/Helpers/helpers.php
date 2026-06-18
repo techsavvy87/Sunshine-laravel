@@ -1167,6 +1167,27 @@ if (!function_exists('appointment_status_label')) {
     }
 }
 
+if (!function_exists('appointment_occupying_statuses')) {
+    function appointment_occupying_statuses(): array
+    {
+        return ['checked_in', 'in_progress', 'issue', 'completed'];
+    }
+}
+
+if (!function_exists('appointment_non_occupying_statuses')) {
+    function appointment_non_occupying_statuses(): array
+    {
+        return ['finished', 'cancelled', 'canceled', 'no_show', 'wait listed'];
+    }
+}
+
+if (!function_exists('appointment_counts_as_occupying')) {
+    function appointment_counts_as_occupying(?string $status): bool
+    {
+        return in_array(strtolower(trim((string) $status)), appointment_occupying_statuses(), true);
+    }
+}
+
 if (!function_exists('appointment_audit_log')) {
     function appointment_audit_log($appointmentId, $description)
     {
@@ -1467,5 +1488,132 @@ if (!function_exists('buildChauffeurPricingData')) {
         }
 
         return $result;
+    }
+}
+
+if (!function_exists('generatePaymentLinkToken')) {
+    function generatePaymentLinkToken() {
+        return bin2hex(random_bytes(32));
+    }
+}
+
+if (!function_exists('createPaymentLink')) {
+    function createPaymentLink($invoice, $appointment, $amount) {
+        $token = generatePaymentLinkToken();
+        $expiresAt = now()->addDays(30);
+
+        $paymentLink = \App\Models\PaymentLink::create([
+            'invoice_id' => $invoice->id,
+            'appointment_id' => $appointment->id,
+            'secure_token' => $token,
+            'amount' => $amount,
+            'currency' => 'usd',
+            'status' => 'pending',
+            'expires_at' => $expiresAt,
+        ]);
+
+        return $paymentLink;
+    }
+}
+
+if (!function_exists('getPaymentLinkUrl')) {
+    function getPaymentLinkUrl($paymentLink) {
+        return route('payment.page', ['token' => $paymentLink->secure_token]);
+    }
+}
+
+if (!function_exists('validatePaymentToken')) {
+    function validatePaymentToken($token) {
+        $paymentLink = \App\Models\PaymentLink::where('secure_token', $token)->first();
+
+        if (!$paymentLink) {
+            return null;
+        }
+
+        if ($paymentLink->isExpired()) {
+            return null;
+        }
+
+        if ($paymentLink->isCompleted()) {
+            return null;
+        }
+
+        return $paymentLink;
+    }
+}
+
+if (!function_exists('createInvoiceCheckoutSession')) {
+    /**
+     * Create a Stripe Checkout Session for an invoice and return the session URL.
+     * This reuses existing payment/customer storage in `payments` table.
+     */
+    function createInvoiceCheckoutSession($invoice, $amount = null)
+    {
+        if (!$invoice) {
+            return null;
+        }
+
+        try {
+            $stripe = new \Stripe\StripeClient(env('STRIPE_SECRET_KEY'));
+
+            $customer = $invoice->customer; // relation on Invoice
+            $stripeCustomerId = null;
+
+            if ($customer) {
+                $payment = \App\Models\Payment::where('user_id', $customer->id)->first();
+                if ($payment && !empty($payment->stripe_customer_id)) {
+                    $stripeCustomerId = $payment->stripe_customer_id;
+                }
+
+                if (!$stripeCustomerId) {
+                    // create a new Stripe customer
+                    $created = $stripe->customers->create([
+                        'name' => trim(($invoice->first_name ?? '') . ' ' . ($invoice->last_name ?? '')),
+                        'email' => $invoice->email,
+                    ]);
+                    $stripeCustomerId = $created->id;
+                    if ($payment) {
+                        $payment->stripe_customer_id = $stripeCustomerId;
+                        $payment->save();
+                    } else {
+                        $payment = new \App\Models\Payment();
+                        $payment->user_id = $customer->id;
+                        $payment->stripe_customer_id = $stripeCustomerId;
+                        $payment->save();
+                    }
+                }
+            }
+
+            $amountFloat = $amount !== null ? $amount : (float) ($invoice->total_amount ?? 0);
+            $amount = (int) round($amountFloat * 100);
+            if ($amount <= 0) {
+                return null;
+            }
+
+            // Build a Checkout Session that will redirect the customer to pay this invoice
+            $session = $stripe->checkout->sessions->create([
+                'payment_method_types' => ['card'],
+                'mode' => 'payment',
+                'customer' => $stripeCustomerId,
+                'line_items' => [[
+                    'price_data' => [
+                        'currency' => ($invoice->currency ?? 'usd'),
+                        'product_data' => ['name' => "Invoice " . ($invoice->invoice_number ?? '')],
+                        'unit_amount' => $amount,
+                    ],
+                    'quantity' => 1,
+                ]],
+                'metadata' => [
+                    'invoice_id' => $invoice->id,
+                ],
+                'success_url' => url('/payment/success?session_id={CHECKOUT_SESSION_ID}'),
+                'cancel_url' => url('/payment/cancel'),
+            ]);
+
+            return $session->url ?? null;
+        } catch (\Exception $e) {
+            \Log::error('Failed to create Checkout Session for invoice', ['invoice_id' => $invoice->id ?? null, 'error' => $e->getMessage()]);
+            return null;
+        }
     }
 }
