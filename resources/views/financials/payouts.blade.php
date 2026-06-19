@@ -27,7 +27,7 @@
     <div class="card-body p-5">
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div class="rounded-lg border border-base-200 bg-base-100 p-4">
-          <p class="text-xs uppercase tracking-wide text-base-content/60">Available balance</p>
+          <p class="text-xs uppercase tracking-wide text-base-content/60">Total Revenue</p>
           <h4 class="mt-2 text-3xl font-semibold leading-none">
             {{ data_get($balanceSummary, 'available.display', '$0.00') }}
           </h4>
